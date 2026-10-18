@@ -14,6 +14,10 @@ export const Colors = {
     backgroundElement: '#F0F0F3',
     backgroundSelected: '#E0E1E6',
     textSecondary: '#60646C',
+    /** 分隔线 */
+    border: '#E3E4E8',
+    /** 强调色（按钮 / 选中） */
+    tint: '#208AEF',
   },
   dark: {
     text: '#ffffff',
@@ -21,6 +25,8 @@ export const Colors = {
     backgroundElement: '#212225',
     backgroundSelected: '#2E3135',
     textSecondary: '#B0B4BA',
+    border: '#3A3D42',
+    tint: '#4DA3F5',
   },
 } as const;
 
