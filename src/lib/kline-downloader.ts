@@ -83,13 +83,13 @@ export async function downloadBatch(
 }
 
 /**
- * 下载多周期（日/周/月）——详情页「下载」按钮用。
+ * 下载多周期（60分钟/日/周/月）——详情页「下载」按钮用。
  */
 export async function downloadAllPeriods(
   code: string,
   limit = 500
 ): Promise<DownloadResult[]> {
-  const periods: KlinePeriod[] = ['daily', 'weekly', 'monthly'];
+  const periods: KlinePeriod[] = ['60min', 'daily', 'weekly', 'monthly'];
   const out: DownloadResult[] = [];
   for (const p of periods) {
     out.push(await downloadKlines(code, p, limit));
