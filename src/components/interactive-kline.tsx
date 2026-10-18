@@ -137,58 +137,104 @@ export function InteractiveKline({
   const { stepX, cw, yOf, xOf, vmax, volTop, ticks } = geom;
 
   // —— 手势 ——
+  // 关键：gesture-handler v2 的回调默认在 UI 线程以 worklet 运行，
+  // 直接调 setState（JS 线程）会闪退。必须 .runOnJS(true) 强制回 JS 线程。
+  // 回调里用 ref 读最新的 stepX/visibleCount 等，避免 useMemo 闭包捕获旧值。
+  const stepXRef = useRef(stepX);
+  stepXRef.current = stepX;
+  const startIdxRef = useRef(startIdx);
+  startIdxRef.current = startIdx;
+  const nRef = useRef(n);
+  nRef.current = n;
+  // 手势 onStart 在 useMemo 闭包里读 state 会拿到旧值，用 ref 存最新
+  const visibleCountRef = useRef(visibleCount);
+  visibleCountRef.current = visibleCount;
+  const scrollOffsetRef = useRef(scrollOffset);
+  scrollOffsetRef.current = scrollOffset;
+
   const clampVisible = (v: number) => Math.max(MIN_VISIBLE, Math.min(total, Math.round(v)));
   const clampOffset = (v: number) => Math.max(0, Math.min(total - 1, Math.round(v)));
 
-  const pinch = Gesture.Pinch()
-    .onStart(() => {
-      baseVisible.current = visibleCount;
-    })
-    .onUpdate((e) => {
-      // scale>1 放大（少根），<1 缩小（多根）
-      setVisibleCount(clampVisible(baseVisible.current / e.scale));
-    });
+  const pinch = useMemo(
+    () =>
+      Gesture.Pinch()
+        .runOnJS(true)
+        .onStart(() => {
+          baseVisible.current = visibleCountRef.current;
+        })
+        .onUpdate((e) => {
+          // scale>1 放大（少根），<1 缩小（多根）
+          setVisibleCount((prev) => clampVisible(baseVisible.current / e.scale));
+        }),
+    [total]
+  );
 
-  const pan = Gesture.Pan()
-    .activeOffsetX([-8, 8])
-    .onStart(() => {
-      baseOffset.current = scrollOffset;
-    })
-    .onUpdate((e) => {
-      // 左滑（translationX 负）→ 看历史 → scrollOffset 增
-      const deltaBars = -e.translationX / stepX;
-      setScrollOffset(clampOffset(baseOffset.current + deltaBars));
-    });
+  const pan = useMemo(
+    () =>
+      Gesture.Pan()
+        .runOnJS(true)
+        .activeOffsetX([-8, 8])
+        .onStart(() => {
+          baseOffset.current = scrollOffsetRef.current;
+        })
+        .onUpdate((e) => {
+          // 左滑（translationX 负）→ 看历史 → scrollOffset 增
+          const deltaBars = -e.translationX / stepXRef.current;
+          setScrollOffset(clampOffset(baseOffset.current + deltaBars));
+        }),
+    [total]
+  );
 
   // 十字光标：长按激活并定位，随后移动更新
   const locateAt = (x: number) => {
-    const idxInView = Math.floor((x - PAD_LEFT) / stepX);
-    const idx = Math.max(0, Math.min(n - 1, idxInView));
-    setSelected(startIdx + idx);
+    const idxInView = Math.floor((x - PAD_LEFT) / stepXRef.current);
+    const idx = Math.max(0, Math.min(nRef.current - 1, idxInView));
+    setSelected(startIdxRef.current + idx);
   };
 
-  const longPress = Gesture.LongPress()
-    .minDuration(250)
-    .onStart((e) => {
-      locateAt(e.x);
-    });
+  const longPress = useMemo(
+    () =>
+      Gesture.LongPress()
+        .runOnJS(true)
+        .minDuration(250)
+        .onStart((e) => {
+          locateAt(e.x);
+        }),
+    []
+  );
 
-  // 十字光标激活后的拖动（与滚动 pan 分开）
-  const cursorPan = Gesture.Pan()
-    .enabled(selected !== null)
-    .onUpdate((e) => {
-      locateAt(e.x);
-    });
+  // 十字光标激活后的拖动：只在已有选中（长按已激活）时才启用，
+  // 否则普通左右滑动应交给滚动 pan。selected 变化才重建此手势。
+  const cursorPan = useMemo(
+    () =>
+      Gesture.Pan()
+        .runOnJS(true)
+        .enabled(selected !== null)
+        .onUpdate((e) => {
+          locateAt(e.x);
+        }),
+    [selected !== null]
+  );
 
-  const tap = Gesture.Tap().onEnd(() => {
-    if (selected !== null) setSelected(null);
-  });
+  const tap = useMemo(
+    () =>
+      Gesture.Tap()
+        .runOnJS(true)
+        .onEnd(() => {
+          setSelected(null);
+        }),
+    []
+  );
 
-  const scrollGestures = Gesture.Simultaneous(pinch, pan);
-  const composed = Gesture.Exclusive(
-    Gesture.Simultaneous(longPress, cursorPan),
-    scrollGestures,
-    tap
+  // 十字光标优先于滚动：长按/光标拖动 → 缩放/滚动 → 单击
+  const composed = useMemo(
+    () =>
+      Gesture.Exclusive(
+        Gesture.Simultaneous(longPress, cursorPan),
+        Gesture.Simultaneous(pinch, pan),
+        tap
+      ),
+    [longPress, cursorPan, pinch, pan, tap]
   );
 
   const reset = () => {
