@@ -25,6 +25,7 @@ export function toSecid(code: string): string {
 
 /** K 线周期 → 东财 klt 参数 */
 function periodToKlt(p: KlinePeriod): number {
+  if (p === '60min') return 60;
   if (p === 'weekly') return 102;
   if (p === 'monthly') return 103;
   return 101; // daily
@@ -77,6 +78,9 @@ export async function fetchKlines(
       high: parseFloat(parts[3]),
       low: parseFloat(parts[4]),
       volume: parseFloat(parts[5]),
+      amount: parseFloat(parts[6] ?? '0'),
+      changePercent: parseFloat(parts[8] ?? '0'),
+      turnover: parseFloat(parts[10] ?? '0'),
     };
   });
 }
@@ -88,7 +92,7 @@ export async function fetchKlines(
  */
 export async function fetchAllStocks(pageSize = 100): Promise<Stock[]> {
   const fields =
-    'f12,f14,f2,f3,f8,f20,f21,f9'; // 代码,名称,最新价,涨跌幅,换手率,总市值,流通市值,PE
+    'f12,f14,f2,f3,f6,f8,f20,f21,f9'; // 代码,名称,最新价,涨跌幅,成交额,换手率,总市值,流通市值,PE
   const fs = 'm:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23';
 
   // 先拿总数
@@ -125,8 +129,10 @@ function mapClist(diff: any[]): Stock[] {
     name: String(d.f14 ?? ''),
     price: Number(d.f2 ?? 0),
     changePercent: Number(d.f3 ?? 0),
+    amount: Number(d.f6 ?? 0), // 成交额（元）
     turnover: Number(d.f8 ?? 0),
     marketCap: Number(d.f20 ?? 0),
+    floatCap: Number(d.f21 ?? 0), // 流通市值（元）
     pe: Number(d.f9 ?? 0),
   }));
 }

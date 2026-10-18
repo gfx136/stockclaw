@@ -210,9 +210,20 @@ function pushRows(
   }
 }
 
-/** 把预载的 Map 包成筛选引擎要的同步 provider */
+/** 把预载的 Map 包成筛选引擎要的同步 provider（单周期） */
 export function mapToProvider(map: KlineMap) {
   return (code: string): KlineBar[] | undefined => map.get(code);
+}
+
+/**
+ * 多周期 provider：同时提供日线与周线。
+ * daily 缺省周期；weekly 在请求周线时返回。用于周线 BBI 策略等多周期筛选。
+ */
+export function multiPeriodProvider(
+  daily: KlineMap,
+  weekly: KlineMap
+): (code: string, period?: 'daily' | 'weekly') => KlineBar[] | undefined {
+  return (code, period = 'daily') => (period === 'weekly' ? weekly.get(code) : daily.get(code));
 }
 
 /** 已缓存 K 线的股票代码集合 */
@@ -234,9 +245,9 @@ export async function countKlines(
     `SELECT period, bars FROM meta WHERE symbol = ?`,
     [symbol]
   );
-  const out: Record<KlinePeriod, number> = { daily: 0, weekly: 0, monthly: 0 };
+  const out: Record<KlinePeriod, number> = { '60min': 0, daily: 0, weekly: 0, monthly: 0 };
   for (const r of rows) {
-    if (r.period === 'daily' || r.period === 'weekly' || r.period === 'monthly') {
+    if (r.period === '60min' || r.period === 'daily' || r.period === 'weekly' || r.period === 'monthly') {
       out[r.period] = r.bars ?? 0;
     }
   }

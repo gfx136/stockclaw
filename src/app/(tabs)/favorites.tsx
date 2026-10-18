@@ -6,7 +6,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { QuoteRow } from '@/components/quote-row';
 import { ThemedText } from '@/components/themed-text';
 import { useTheme } from '@/hooks/use-theme';
-import { fetchAllStocks } from '@/lib/eastmoney';
+import { fetchAllStocks } from '@/lib/api/failover';
 import { loadFavorites, removeFavorite } from '@/lib/favorites';
 import type { FavoriteItem, Stock } from '@/types/stock';
 

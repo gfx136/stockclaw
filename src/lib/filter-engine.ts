@@ -14,8 +14,9 @@
  */
 
 import { calcAllIndicators, snapshotAt, nthLast } from '@/lib/indicators';
+import { matchBBIGroup, matchWeeklyBBI } from '@/lib/weekly-bbi';
 import {
-  capTierOf,
+  rankToTier,
   type FilterSet,
   type FilterResult,
   type IndicatorSeries,
@@ -25,8 +26,11 @@ import {
   type Stock,
 } from '@/types/stock';
 
-/** K 线提供者：同步返回已缓存的 K 线（无则返回 undefined / 空数组） */
-export type KlineProvider = (code: string) => KlineBar[] | undefined;
+/**
+ * K 线提供者：同步返回已缓存的 K 线（无则返回 undefined / 空数组）。
+ * period 缺省为日线；weeklyBBIStrategy 信号会请求周线。
+ */
+export type KlineProvider = (code: string, period?: 'daily' | 'weekly') => KlineBar[] | undefined;
 
 /** 判断数值是否落在区间内；区间字段缺省视为不限制 */
 function inRange(value: number | undefined, range?: RangeCondition): boolean {
@@ -55,15 +59,57 @@ export function hasAnySignal(s?: SignalCondition): boolean {
     !!s.rsiOverbought ||
     !!s.aboveBollMid ||
     !!s.belowBollLower ||
-    !!s.volumeSurge
+    !!s.volumeSurge ||
+    !!s.weeklyBBIStrategy ||
+    // BBI 分组（周线/日线）
+    !!s.weeklyCloseGtBBI ||
+    !!s.weeklyBull ||
+    !!s.weeklyBBIGtMA26 ||
+    !!s.dailyCloseGtBBI ||
+    !!s.daily4CloseGtBBI ||
+    !!s.dailyBBIGtMA26
   );
 }
 
-/** 基础条件快筛（不依赖 K 线），通过返回 true */
-export function matchBase(stock: Stock, filter: FilterSet): boolean {
+/** 是否有周线 BBI 条件 */
+function hasWeeklyBBI(s?: SignalCondition): boolean {
+  return !!(s && (s.weeklyBBIStrategy || s.weeklyCloseGtBBI || s.weeklyBull || s.weeklyBBIGtMA26));
+}
+
+/** 是否有日线 BBI 条件 */
+function hasDailyBBI(s?: SignalCondition): boolean {
+  return !!(s && (s.dailyCloseGtBBI || s.daily4CloseGtBBI || s.dailyBBIGtMA26));
+}
+
+/** 基础条件快筛（不依赖 K 线），通过返回 true。rankMap 提供市值排名（排名制分档用） */
+export function matchBase(
+  stock: Stock,
+  filter: FilterSet,
+  rankMap?: Map<string, number>
+): boolean {
+  // —— 排除条件（最先判，成本最低） ——
+  const name = stock.name;
+  const code = stock.code.replace(/\D/g, '');
+  if (filter.excludeST && name.includes('ST')) return false;
+  if (filter.excludeBank && name.includes('银行')) return false;
+  if (filter.excludeKCB && (code.startsWith('688') || code.startsWith('689'))) return false;
+  if (filter.excludeChiNext && code.startsWith('30')) return false;
+  if (
+    filter.excludeBSE &&
+    (code.startsWith('43') ||
+      code.startsWith('82') ||
+      code.startsWith('83') ||
+      code.startsWith('87') ||
+      code.startsWith('8'))
+  ) {
+    return false;
+  }
+
   if (filter.capTiers && filter.capTiers.length > 0) {
-    const tier = capTierOf(stock.marketCap);
-    if (!tier || !filter.capTiers.includes(tier)) return false;
+    // 排名制分档：大盘 Top100 / 中盘 101-300 / 小盘 301-500 / 长尾 >500
+    const rank = rankMap?.get(stock.code);
+    if (rank === undefined) return false;
+    if (!filter.capTiers.includes(rankToTier(rank))) return false;
   }
   if (!inRange(stock.marketCap, filter.marketCapRange)) return false;
   if (!inRange(stock.pe, filter.peRange)) return false;
@@ -215,13 +261,99 @@ export function filterStocks(
       '已设置技术指标条件，但未提供本地 K 线数据，信号条件已被忽略。请先在详情页下载 K 线。';
   }
 
+  // 市值排名映射（排名制分档用）：市值降序，第 1 名市值最大
+  let rankMap: Map<string, number> | undefined;
+  if (filter.capTiers && filter.capTiers.length > 0) {
+    const sorted = [...stocks].sort((a, b) => (b.marketCap ?? 0) - (a.marketCap ?? 0));
+    rankMap = new Map(sorted.map((s, i) => [s.code, i + 1]));
+  }
+
   for (const stock of stocks) {
-    if (!matchBase(stock, filter)) continue;
+    if (!matchBase(stock, filter, rankMap)) continue;
     passedBase++;
 
     if (!needSignals || !klineProvider) {
       results.push({ stock, hits: [] });
       if (results.length >= limit) break;
+      continue;
+    }
+
+    const sig = filter.signals!;
+    const hits: string[] = [];
+
+    // —— 周线 BBI 组：用周线数据判定 ——
+    if (hasWeeklyBBI(sig)) {
+      let weeklyBars: KlineBar[] | undefined;
+      try {
+        weeklyBars = klineProvider(stock.code, 'weekly');
+      } catch {
+        weeklyBars = undefined;
+      }
+      if (!weeklyBars || weeklyBars.length < 26) {
+        skippedNoKline++;
+        continue;
+      }
+      // 整策略开关：BBI>MA26 且 收盘>BBI
+      if (sig.weeklyBBIStrategy) {
+        const r = matchWeeklyBBI(weeklyBars);
+        if (!r.pass) continue;
+        hits.push(`周线BBI多头 (BBI ${r.weeklyBBI?.toFixed(2)}>MA26 ${r.weeklyMA26?.toFixed(2)})`);
+      }
+      // 分组条件（组内 AND）
+      const wHits = matchBBIGroup(weeklyBars, {
+        closeGtBBI: sig.weeklyCloseGtBBI,
+        bull: sig.weeklyBull,
+        bbiGtMA26: sig.weeklyBBIGtMA26,
+      });
+      const wExpected = [sig.weeklyCloseGtBBI, sig.weeklyBull, sig.weeklyBBIGtMA26].filter(Boolean).length;
+      if (wExpected > 0) {
+        if (wHits.length < wExpected) continue;
+        hits.push(...wHits.map((h) => `周线:${h}`));
+      }
+    }
+
+    // —— 日线 BBI 组：用日线数据判定 ——
+    if (hasDailyBBI(sig)) {
+      let dailyBars: KlineBar[] | undefined;
+      try {
+        dailyBars = klineProvider(stock.code, 'daily');
+      } catch {
+        dailyBars = undefined;
+      }
+      if (!dailyBars || dailyBars.length < 26) {
+        skippedNoKline++;
+        continue;
+      }
+      const dHits = matchBBIGroup(dailyBars, {
+        closeGtBBI: sig.dailyCloseGtBBI,
+        bbiGtMA26: sig.dailyBBIGtMA26,
+        fourCloseGtBBI: sig.daily4CloseGtBBI,
+      });
+      const dExpected = [sig.dailyCloseGtBBI, sig.dailyBBIGtMA26, sig.daily4CloseGtBBI].filter(Boolean).length;
+      if (dExpected > 0) {
+        if (dHits.length < dExpected) continue;
+        hits.push(...dHits.map((h) => `日线:${h}`));
+      }
+    }
+
+    // 判断是否还有 BBI 以外的其他日线信号
+    const onlyBBI = hasWeeklyBBI(sig) || hasDailyBBI(sig);
+    const hasOtherDailySignal = hasAnySignal({
+      ...sig,
+      weeklyBBIStrategy: undefined,
+      weeklyCloseGtBBI: undefined,
+      weeklyBull: undefined,
+      weeklyBBIGtMA26: undefined,
+      dailyCloseGtBBI: undefined,
+      daily4CloseGtBBI: undefined,
+      dailyBBIGtMA26: undefined,
+    });
+
+    if (onlyBBI && !hasOtherDailySignal) {
+      if (hits.length > 0) {
+        results.push({ stock, hits });
+        if (results.length >= limit) break;
+      }
       continue;
     }
 
@@ -238,9 +370,9 @@ export function filterStocks(
 
     try {
       const series = calcAllIndicators(bars);
-      const hits = matchSignals(filter.signals!, series, bars);
-      if (hits.length > 0) {
-        results.push({ stock, snapshot: snapshotAt(series, bars), hits });
+      const otherHits = matchSignals(sig, series, bars);
+      if (otherHits.length > 0 || hits.length > 0) {
+        results.push({ stock, snapshot: snapshotAt(series, bars), hits: [...hits, ...otherHits] });
         if (results.length >= limit) break;
       }
     } catch {

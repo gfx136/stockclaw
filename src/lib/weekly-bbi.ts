@@ -102,3 +102,58 @@ export function matchWeeklyBBI(bars: KlineBar[]): WeeklyBBIResult {
     reason: pass ? undefined : 'BBI/MA26/收盘 关系不满足',
   };
 }
+
+/* ------------------------------------------------------------------ *
+ * BBI 分组子条件（按界面规格：周线/日线两组，组内多选，全部满足才命中）
+ * ------------------------------------------------------------------ */
+
+export interface BBIGroupSignals {
+  /** 收盘 > BBI */
+  closeGtBBI?: boolean;
+  /** 红柱（收 > 开）——仅周线组有 */
+  bull?: boolean;
+  /** BBI > MA26 */
+  bbiGtMA26?: boolean;
+  /** 近4根连续收盘 > BBI——仅日线组有 */
+  fourCloseGtBBI?: boolean;
+}
+
+/**
+ * 判定一组 BBI 子条件（同周期内 AND）。
+ * bars 为该周期的 K 线（升序）。
+ */
+export function matchBBIGroup(bars: KlineBar[], sig: BBIGroupSignals): string[] {
+  const hits: string[] = [];
+  const n = bars.length;
+  if (n < 26) return hits; // MA26 至少需要 26 根
+
+  const closes = bars.map((b) => b.close);
+  const bbiSeries = calcBBI(closes);
+  const ma26Series = sma(closes, 26);
+  const i = n - 1;
+  const bbi = bbiSeries[i];
+  const ma26 = ma26Series[i];
+  const close = closes[i];
+  const open = bars[i].open;
+
+  if (bbi === undefined || ma26 === undefined) return hits;
+
+  if (sig.closeGtBBI && close > bbi) hits.push('收盘>BBI');
+  if (sig.bull && close > open) hits.push('红柱(收>开)');
+  if (sig.bbiGtMA26 && bbi > ma26) hits.push('BBI>MA26');
+  if (sig.fourCloseGtBBI) {
+    // 近 4 根连续收盘 > BBI
+    let ok = true;
+    for (let k = 0; k < 4; k++) {
+      const idx = n - 1 - k;
+      const b = bbiSeries[idx];
+      if (idx < 0 || b === undefined || closes[idx] <= b) {
+        ok = false;
+        break;
+      }
+    }
+    if (ok) hits.push('近4根连续收盘>BBI');
+  }
+  return hits;
+}
+

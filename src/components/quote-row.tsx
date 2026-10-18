@@ -9,6 +9,7 @@ import type { Stock } from '@/types/stock';
 interface Props {
   stock: Stock;
   onPress?: (s: Stock) => void;
+  onLongPress?: (s: Stock) => void;
 }
 
 /**
@@ -16,7 +17,7 @@ interface Props {
  * 布局：左（名称 + 代码） / 中（成交额等次要信息） / 右（价格 + 涨跌幅）
  * ⚠️ 涨跌幅颜色走 A 股口径：涨红跌绿。
  */
-export const QuoteRow = memo(function QuoteRow({ stock, onPress }: Props) {
+export const QuoteRow = memo(function QuoteRow({ stock, onPress, onLongPress }: Props) {
   const color = upDownColor(stock.changePercent);
   const sub = stock.amount
     ? `额 ${fmtMoney(stock.amount)}`
@@ -27,6 +28,8 @@ export const QuoteRow = memo(function QuoteRow({ stock, onPress }: Props) {
   return (
     <Pressable
       onPress={() => onPress?.(stock)}
+      onLongPress={onLongPress ? () => onLongPress(stock) : undefined}
+      delayLongPress={350}
       style={({ pressed }) => [styles.pressable, pressed && styles.pressed]}>
       <View style={styles.left}>
         <ThemedText type="smallBold" numberOfLines={1} style={styles.name}>

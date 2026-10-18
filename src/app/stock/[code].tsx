@@ -10,10 +10,11 @@ import {
   View,
 } from 'react-native';
 
-import { CandleChart, IndicatorBar, MALegend } from '@/components/candle-chart';
+import { IndicatorBar, MALegend } from '@/components/candle-chart';
+import { InteractiveKline } from '@/components/interactive-kline';
 import { ThemedText } from '@/components/themed-text';
 import { useTheme } from '@/hooks/use-theme';
-import { fetchQuote } from '@/lib/eastmoney';
+import { fetchQuote } from '@/lib/api/failover';
 import { isFavorite, toggleFavorite } from '@/lib/favorites';
 import {
   fmtChange,
@@ -33,9 +34,10 @@ import { loadKlines } from '@/lib/kline-db';
 import type { IndicatorSeries, KlineBar, KlinePeriod, Stock } from '@/types/stock';
 
 const PERIODS: { key: KlinePeriod; label: string }[] = [
-  { key: 'daily', label: '日K' },
-  { key: 'weekly', label: '周K' },
-  { key: 'monthly', label: '月K' },
+  { key: '60min', label: '60分钟' },
+  { key: 'daily', label: '日线' },
+  { key: 'weekly', label: '周线' },
+  { key: 'monthly', label: '月线' },
 ];
 
 /** 展示的 K 线根数 */
@@ -234,15 +236,16 @@ export default function StockDetailScreen() {
               </ThemedText>
             </View>
           ) : (
-            <CandleChart
+            <InteractiveKline
               bars={bars}
               width={chartW}
               height={280}
               series={series ?? undefined}
               maOverlay={[5, 10, 20]}
-              showVolume
+              defaultVisible={100}
               gridColor={theme.border}
               axisColor={theme.textSecondary}
+              textColor={theme.text}
             />
           )}
         </View>

@@ -3,9 +3,7 @@ import { Text, useColorScheme } from 'react-native';
 
 import { Colors } from '@/constants/theme';
 
-// 模板自带的 tabIcons 只有 home/explore 两个 png，不够用。
-// 用文字符号代替，避免找图标资源。color 参数由 Tabs 传入，这里不使用。
-function TabBarEmoji({ emoji }: { emoji: string }) {
+function TabIcon({ emoji }: { emoji: string }) {
   return <Text style={{ fontSize: 20 }}>{emoji}</Text>;
 }
 
@@ -25,29 +23,29 @@ export default function TabLayout() {
       <Tabs.Screen
         name="index"
         options={{
-          title: '行情',
-          tabBarIcon: () => <TabBarEmoji emoji="📈" />,
+          title: '全部股票',
+          tabBarIcon: () => <TabIcon emoji="📈" />,
         }}
       />
       <Tabs.Screen
-        name="screener"
+        name="results"
         options={{
-          title: '选股',
-          tabBarIcon: () => <TabBarEmoji emoji="🔍" />,
+          title: '选股结果',
+          tabBarIcon: () => <TabIcon emoji="📋" />,
         }}
       />
       <Tabs.Screen
         name="favorites"
         options={{
           title: '自选',
-          tabBarIcon: () => <TabBarEmoji emoji="⭐" />,
+          tabBarIcon: () => <TabIcon emoji="⭐" />,
         }}
       />
       <Tabs.Screen
         name="settings"
         options={{
           title: '设置',
-          tabBarIcon: () => <TabBarEmoji emoji="⚙️" />,
+          tabBarIcon: () => <TabIcon emoji="⚙️" />,
         }}
       />
     </Tabs>

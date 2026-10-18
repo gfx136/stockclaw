@@ -1,0 +1,82 @@
+name: Build unsigned iOS IPA
+
+# 手动触发：GitHub 网页 Actions 标签页 → 选本工作流 → Run workflow
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/build-ipa.yml"
+
+jobs:
+  build:
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout this repo
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Select latest Xcode
+        run: |
+          LATEST=$(ls -d /Applications/Xcode*.app | sort -V | tail -n1)
+          sudo xcode-select -s "$LATEST"
+          xcodebuild -version
+
+      - name: Install JS dependencies
+        run: npm install --legacy-peer-deps
+
+      - name: Prebuild native iOS project
+        run: CI=1 npx expo prebuild --platform ios
+
+      - name: Install CocoaPods dependencies
+        working-directory: ios
+        run: pod install
+
+      - name: Find workspace and scheme
+        id: target_scheme
+        run: |
+          WORKSPACE=$(ls -d ios/*.xcworkspace | head -n1)
+          PROJECT=$(ls -d ios/*.xcodeproj | head -n1)
+          SCHEME=$(basename "$PROJECT" .xcodeproj)
+          echo "workspace=$WORKSPACE" >> "$GITHUB_OUTPUT"
+          echo "scheme=$SCHEME" >> "$GITHUB_OUTPUT"
+          echo "Workspace: $WORKSPACE / Scheme: $SCHEME"
+
+      - name: Build (unsigned)
+        run: |
+          xcodebuild \
+            -workspace "${{ steps.target_scheme.outputs.workspace }}" \
+            -scheme "${{ steps.target_scheme.outputs.scheme }}" \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination "generic/platform=iOS" \
+            -derivedDataPath build/DerivedData \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGN_ENTITLEMENTS="" \
+            AD_HOC_CODE_SIGNING_ALLOWED=YES \
+            build
+
+      - name: Package unsigned IPA
+        run: |
+          APP_PATH=$(find build/DerivedData/Build/Products -maxdepth 2 -name "*.app" -type d | head -n1)
+          if [ -z "$APP_PATH" ]; then
+            echo "No .app bundle found"
+            exit 1
+          fi
+          mkdir -p build/Payload
+          cp -r "$APP_PATH" build/Payload/
+          cd build
+          zip -r stockclaw.ipa Payload
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: stockclaw-ipa
+          path: build/stockclaw.ipa
+          retention-days: 14

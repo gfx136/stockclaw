@@ -1,5 +1,5 @@
 import { useRouter } from 'expo-router';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -13,10 +13,12 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { QuoteRow } from '@/components/quote-row';
+import { ExclusionPicker } from '@/components/filter-controls';
 import { ThemedText } from '@/components/themed-text';
 import { useTheme } from '@/hooks/use-theme';
-import { fetchAllStocks } from '@/lib/eastmoney';
+import { fetchAllStocks } from '@/lib/api/failover';
 import { toggleFavorite } from '@/lib/favorites';
+import { getFilterState, setFilter, subscribeFilter } from '@/lib/filter-store';
 import { upDownColor } from '@/lib/format';
 import type { Stock } from '@/types/stock';
 
@@ -50,6 +52,10 @@ export default function AllStocksScreen() {
   const [desc, setDesc] = useState(true);
   const mounted = useRef(true);
 
+  // 快捷排除条件（与筛选器共享 filter-store）
+  const filterState = useSyncExternalStore(subscribeFilter, getFilterState, getFilterState);
+  const filter = filterState.filter;
+
   useEffect(() => {
     mounted.current = true;
     return () => {
@@ -81,10 +87,26 @@ export default function AllStocksScreen() {
     load();
   }, [load]);
 
-  /** 搜索 + 排序 */
+  /** 搜索 + 快捷排除 + 排序 */
   const view = useMemo(() => {
     const q = query.trim().toLowerCase();
     let list = stocks;
+    // 快捷排除（与筛选器共享 filter-store）
+    list = list.filter((s) => {
+      const code = s.code.replace(/\D/g, '');
+      if (filter.excludeST && s.name.includes('ST')) return false;
+      if (filter.excludeBank && s.name.includes('银行')) return false;
+      if (filter.excludeKCB && (code.startsWith('688') || code.startsWith('689'))) return false;
+      if (filter.excludeChiNext && code.startsWith('30')) return false;
+      if (
+        filter.excludeBSE &&
+        (code.startsWith('43') || code.startsWith('82') || code.startsWith('83') ||
+          code.startsWith('87') || code.startsWith('8'))
+      ) {
+        return false;
+      }
+      return true;
+    });
     if (q) {
       list = list.filter(
         (s) => s.name.toLowerCase().includes(q) || s.code.toLowerCase().includes(q)
@@ -96,7 +118,7 @@ export default function AllStocksScreen() {
       const bv = (b[sortKey] ?? Number.NEGATIVE_INFINITY) as number;
       return (av - bv) * dir;
     });
-  }, [stocks, query, sortKey, desc]);
+  }, [stocks, query, sortKey, desc, filter]);
 
   const upCount = useMemo(() => stocks.filter((s) => s.changePercent > 0).length, [stocks]);
   const downCount = useMemo(() => stocks.filter((s) => s.changePercent < 0).length, [stocks]);
@@ -137,17 +159,55 @@ export default function AllStocksScreen() {
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]} edges={['top']}>
+      {/* 头部：标题 + 操作按钮 */}
+      <View style={styles.header}>
+        <ThemedText type="subtitle" style={styles.headerTitle}>
+          全部股票
+        </ThemedText>
+        <View style={styles.headerActions}>
+          <Pressable onPress={() => load(true)} hitSlop={8} style={styles.headerBtn}>
+            <ThemedText type="small">⟳</ThemedText>
+          </Pressable>
+          <Pressable onPress={() => router.push('/filter')} hitSlop={8} style={styles.headerBtn}>
+            <ThemedText type="small">筛选</ThemedText>
+          </Pressable>
+        </View>
+      </View>
+
       {/* 搜索框 */}
       <View style={styles.searchWrap}>
         <TextInput
           style={[styles.search, { backgroundColor: theme.backgroundElement, color: theme.text }]}
-          placeholder="搜索名称/代码，如 600000"
+          placeholder="搜索名称/代码，如 浦发银行 600000"
           placeholderTextColor={theme.textSecondary}
           value={query}
           onChangeText={setQuery}
           autoCapitalize="none"
           autoCorrect={false}
           returnKeyType="search"
+        />
+      </View>
+
+      {/* 快捷排除 chips */}
+      <View style={styles.excludeWrap}>
+        <ExclusionPicker
+          value={{
+            excludeST: filter.excludeST,
+            excludeKCB: filter.excludeKCB,
+            excludeChiNext: filter.excludeChiNext,
+            excludeBSE: filter.excludeBSE,
+            excludeBank: filter.excludeBank,
+          }}
+          onChange={(v) =>
+            setFilter({
+              ...filter,
+              excludeST: v?.excludeST,
+              excludeKCB: v?.excludeKCB,
+              excludeChiNext: v?.excludeChiNext,
+              excludeBSE: v?.excludeBSE,
+              excludeBank: v?.excludeBank,
+            })
+          }
         />
       </View>
 
@@ -210,16 +270,7 @@ export default function AllStocksScreen() {
           windowSize={11}
           removeClippedSubviews
           renderItem={({ item }) => (
-            <View style={styles.rowWrap}>
-              <QuoteRow stock={item} onPress={openDetail} />
-              {/* 长按区域：覆盖整行以支持收藏 */}
-              <Pressable
-                onLongPress={() => handleLongPress(item)}
-                delayLongPress={350}
-                style={StyleSheet.absoluteFill}
-                pointerEvents="box-only"
-              />
-            </View>
+            <QuoteRow stock={item} onPress={openDetail} onLongPress={handleLongPress} />
           )}
           ItemSeparatorComponent={() => (
             <View style={[styles.sep, { backgroundColor: theme.border }]} />
@@ -239,6 +290,18 @@ const styles = StyleSheet.create({
   container: { flex: 1 },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12 },
   loadingText: { marginTop: 8 },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingTop: 6,
+    paddingBottom: 4,
+  },
+  headerTitle: { fontSize: 22 },
+  headerActions: { flexDirection: 'row', gap: 12 },
+  headerBtn: { padding: 4 },
+  excludeWrap: { paddingHorizontal: 16, paddingBottom: 4 },
   searchWrap: { paddingHorizontal: 16, paddingTop: 8, paddingBottom: 4 },
   search: { height: 40, borderRadius: 10, paddingHorizontal: 14, fontSize: 15 },
   statsRow: {
@@ -257,7 +320,6 @@ const styles = StyleSheet.create({
     paddingBottom: 6,
   },
   sortChip: { paddingHorizontal: 12, paddingVertical: 4, borderRadius: 12 },
-  rowWrap: { position: 'relative' },
   sep: { height: StyleSheet.hairlineWidth, marginLeft: 16 },
   empty: { textAlign: 'center', marginTop: 40 },
   errText: { textAlign: 'center', paddingHorizontal: 32 },

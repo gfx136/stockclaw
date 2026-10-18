@@ -69,10 +69,10 @@ export interface KlineBar {
 }
 
 /** K 线周期 */
-export type KlinePeriod = 'daily' | 'weekly' | 'monthly';
+export type KlinePeriod = '60min' | 'daily' | 'weekly' | 'monthly';
 
 /** 市值分层 */
-export type MarketCapTier = 'large' | 'mid' | 'small';
+export type MarketCapTier = 'large' | 'mid' | 'small' | 'tail';
 
 /** 收藏条目 */
 export interface FavoriteItem {
@@ -166,6 +166,25 @@ export interface SignalCondition {
   belowBollLower?: boolean;
   /** 放量：当日量 > days 日均量 × multiple */
   volumeSurge?: { days: number; multiple: number };
+  /**
+   * 周线 BBI 多头策略（用户自定义公式）：
+   *   周线BBI(3,6,12,24) > 周线MA26  且  周线收盘 > 周线BBI
+   * 依赖**周线** K 线。
+   */
+  weeklyBBIStrategy?: boolean;
+  /* —— BBI 分组（按界面规格：周线/日线两组，组内多选）—— */
+  /** 周线：收盘 > BBI */
+  weeklyCloseGtBBI?: boolean;
+  /** 周线：红柱（收 > 开） */
+  weeklyBull?: boolean;
+  /** 周线：BBI > MA26 */
+  weeklyBBIGtMA26?: boolean;
+  /** 日线：收盘 > BBI */
+  dailyCloseGtBBI?: boolean;
+  /** 日线：近4根连续收盘 > BBI */
+  daily4CloseGtBBI?: boolean;
+  /** 日线：BBI > MA26 */
+  dailyBBIGtMA26?: boolean;
 }
 
 /** 筛选条件集 */
@@ -184,6 +203,16 @@ export interface FilterSet {
   priceRange?: RangeCondition;
   /** 代码 / 名称关键字 */
   keyword?: string;
+  /** 排除 ST / *ST */
+  excludeST?: boolean;
+  /** 排除科创板（688 / 689） */
+  excludeKCB?: boolean;
+  /** 排除创业板（30 开头） */
+  excludeChiNext?: boolean;
+  /** 排除北交所（43 / 82 / 83 / 87 / 8 开头） */
+  excludeBSE?: boolean;
+  /** 排除银行（名称含「银行」） */
+  excludeBank?: boolean;
   /**
    * 技术指标信号条件。
    * 注意：信号判定依赖本地 K 线缓存，未缓存的股票会被跳过——
@@ -200,24 +229,32 @@ export interface FilterResult {
   hits: string[];
 }
 
-/** 市值分层阈值（元）——与大类惯例一致，可按需调整 */
-export const CAP_TIER_THRESHOLDS: Record<MarketCapTier, RangeCondition> = {
+/** 市值分层阈值（元）——已废弃，分档改为排名制（见 rankToTier） */
+export const CAP_TIER_THRESHOLDS: Record<string, RangeCondition> = {
   large: { min: 100_000_000_000 },
   mid: { min: 10_000_000_000, max: 100_000_000_000 },
   small: { max: 10_000_000_000 },
 };
 
-/** 判断市值属于哪一层；市值为 0 / 未知时返回 undefined */
-export function capTierOf(marketCap?: number): MarketCapTier | undefined {
-  if (!marketCap || marketCap <= 0) return undefined;
-  if (marketCap >= 100_000_000_000) return 'large';
-  if (marketCap >= 10_000_000_000) return 'mid';
-  return 'small';
+/**
+ * 按市值排名分档（与界面规格一致）：
+ *   大盘 = 市值排名 Top 100
+ *   中盘 = 101-300
+ *   小盘 = 301-500
+ *   长尾 = >500
+ * rank 从 1 开始（市值降序第 1 名）。
+ */
+export function rankToTier(rank: number): MarketCapTier {
+  if (rank <= 100) return 'large';
+  if (rank <= 300) return 'mid';
+  if (rank <= 500) return 'small';
+  return 'tail';
 }
 
-/** 市值分层中文名 */
+/** 市值分层中文名（与界面规格一致） */
 export const CAP_TIER_LABELS: Record<MarketCapTier, string> = {
-  large: '大盘',
-  mid: '中盘',
-  small: '小盘',
+  large: '大盘(Top100)',
+  mid: '中盘(101-300)',
+  small: '小盘(301-500)',
+  tail: '长尾(>500)',
 };

@@ -1,11 +1,20 @@
 import { useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
 import { useTheme } from '@/hooks/use-theme';
+import {
+  getSourceMode,
+  listSources,
+  setSourceMode,
+  speedTestSources,
+  type SourceMode,
+  type SpeedTestResult,
+} from '@/lib/api/failover';
 import { clearAllKlines, dbStats } from '@/lib/kline-db';
+import { getLocalDataMode, setLocalDataMode } from '@/lib/prefs';
 
 interface Stats {
   totalBars: number;
@@ -16,8 +25,12 @@ interface Stats {
 export default function SettingsScreen() {
   const theme = useTheme();
   const [stats, setStats] = useState<Stats | null>(null);
+  const [sourceMode, setSourceModeState] = useState<SourceMode>('auto');
+  const [localMode, setLocalMode] = useState(true);
+  const [speedResults, setSpeedResults] = useState<SpeedTestResult[] | null>(null);
+  const [testing, setTesting] = useState(false);
 
-  // 每次进入都刷新缓存统计
+  // 每次进入都刷新缓存统计与数据源模式
   useFocusEffect(
     useCallback(() => {
       let active = true;
@@ -28,6 +41,10 @@ export default function SettingsScreen() {
         } catch {
           if (active) setStats(null);
         }
+        const mode = await getSourceMode();
+        if (active) setSourceModeState(mode);
+        const lm = await getLocalDataMode();
+        if (active) setLocalMode(lm);
       })();
       return () => {
         active = false;
@@ -50,6 +67,29 @@ export default function SettingsScreen() {
     ]);
   }, []);
 
+  const onSelectSource = useCallback(async (mode: SourceMode) => {
+    await setSourceMode(mode);
+    setSourceModeState(mode);
+  }, []);
+
+  const onSpeedTest = useCallback(async () => {
+    setTesting(true);
+    setSpeedResults(null);
+    try {
+      const r = await speedTestSources();
+      setSpeedResults(r);
+    } catch {
+      setSpeedResults([]);
+    } finally {
+      setTesting(false);
+    }
+  }, []);
+
+  const onToggleLocalMode = useCallback(async (v: boolean) => {
+    setLocalMode(v);
+    await setLocalDataMode(v);
+  }, []);
+
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]} edges={['top']}>
       <ScrollView contentContainerStyle={styles.content}>
@@ -58,8 +98,75 @@ export default function SettingsScreen() {
         </ThemedText>
 
         <Section title="数据源" theme={theme}>
-          <Row label="当前数据源" value="东方财富" theme={theme} />
-          <Row label="故障转移" value="未启用（二期）" theme={theme} />
+          {listSources().map((s) => {
+            const active = sourceMode === s.id;
+            return (
+              <Pressable key={s.id} onPress={() => onSelectSource(s.id)}>
+                <View style={styles.row}>
+                  <View style={styles.sourceLeft}>
+                    <Text style={[styles.rowLabel, { color: theme.text }]}>{s.name}</Text>
+                    <Text style={[styles.sourceDesc, { color: theme.textSecondary }]}>
+                      {s.desc}
+                    </Text>
+                  </View>
+                  <View
+                    style={[
+                      styles.radio,
+                      {
+                        borderColor: active ? theme.tint : theme.textSecondary,
+                        backgroundColor: active ? theme.tint : 'transparent',
+                      },
+                    ]}>
+                    {active ? <View style={styles.radioDot} /> : null}
+                  </View>
+                </View>
+              </Pressable>
+            );
+          })}
+          <View style={styles.row}>
+            <Text style={[styles.rowLabel, { color: theme.textSecondary, fontSize: 12 }]}>
+              自动模式下源不可用时自动切换下一个
+            </Text>
+          </View>
+          {/* 连接测速 */}
+          <Pressable onPress={onSpeedTest} disabled={testing}>
+            <View style={styles.row}>
+              <Text style={[styles.rowLabel, { color: theme.tint }]}>连接测速</Text>
+              {testing ? (
+                <ActivityIndicator size="small" />
+              ) : (
+                <Text style={[styles.rowValue, { color: theme.textSecondary }]}>检测各源延迟 ›</Text>
+              )}
+            </View>
+          </Pressable>
+          {speedResults ? (
+            <View style={styles.speedBox}>
+              {speedResults.map((r) => (
+                <View key={r.id} style={styles.speedRow}>
+                  <Text style={[styles.speedName, { color: theme.text }]}>{r.name}</Text>
+                  <Text
+                    style={[
+                      styles.speedVal,
+                      { color: r.ok ? '#0AA869' : '#E43B3B' },
+                    ]}>
+                    {r.ok ? `${r.latencyMs}ms` : '不可用'}
+                  </Text>
+                </View>
+              ))}
+            </View>
+          ) : null}
+        </Section>
+
+        <Section title="本地化数据" theme={theme}>
+          <View style={styles.row}>
+            <View style={styles.sourceLeft}>
+              <Text style={[styles.rowLabel, { color: theme.text }]}>本地化数据模式</Text>
+              <Text style={[styles.sourceDesc, { color: theme.textSecondary }]}>
+                选股与K线优先读本机已下载数据，没下载到的自动回退联网
+              </Text>
+            </View>
+            <Switch value={localMode} onValueChange={onToggleLocalMode} />
+          </View>
         </Section>
 
         <Section title="本地数据" theme={theme}>
@@ -169,4 +276,19 @@ const styles = StyleSheet.create({
   rowLabel: { fontSize: 14 },
   rowValue: { fontSize: 13, flexShrink: 1, textAlign: 'right' },
   footer: { textAlign: 'center', fontSize: 10, lineHeight: 16, marginTop: 8 },
+  sourceLeft: { flex: 1, gap: 2 },
+  sourceDesc: { fontSize: 12 },
+  radio: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    borderWidth: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  radioDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#fff' },
+  speedBox: { paddingHorizontal: 14, paddingVertical: 10, gap: 6 },
+  speedRow: { flexDirection: 'row', justifyContent: 'space-between' },
+  speedName: { fontSize: 13 },
+  speedVal: { fontSize: 13, fontWeight: '600', fontVariant: ['tabular-nums'] },
 });

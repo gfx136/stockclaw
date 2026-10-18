@@ -102,6 +102,79 @@ export const SIGNAL_OPTIONS: SignalOption[] = [
   { key: 'volumeSurge', label: '放量(5日×2)', volumeSurge: true },
 ];
 
+/* ------------------------------------------------------------------ *
+ * BBI 分组（按界面规格：周线/日线两组，组内多选）
+ * ------------------------------------------------------------------ */
+
+export interface BBIOption {
+  key: keyof SignalCondition;
+  label: string;
+  group: 'weekly' | 'daily';
+}
+
+export const BBI_OPTIONS: BBIOption[] = [
+  { key: 'weeklyCloseGtBBI', label: '收盘 > BBI', group: 'weekly' },
+  { key: 'weeklyBull', label: '红柱(收>开)', group: 'weekly' },
+  { key: 'weeklyBBIGtMA26', label: 'BBI > MA26', group: 'weekly' },
+  { key: 'dailyCloseGtBBI', label: '收盘 > BBI', group: 'daily' },
+  { key: 'daily4CloseGtBBI', label: '近4根连续收盘 > BBI', group: 'daily' },
+  { key: 'dailyBBIGtMA26', label: 'BBI > MA26', group: 'daily' },
+];
+
+export function BBIPicker({
+  value,
+  onChange,
+}: {
+  value: SignalCondition | undefined;
+  onChange: (v: SignalCondition | undefined) => void;
+}) {
+  const theme = useTheme();
+  const isOn = (k: keyof SignalCondition) => value?.[k] === true;
+
+  const toggle = (k: keyof SignalCondition) => {
+    const next: SignalCondition = { ...(value ?? {}) };
+    if (next[k]) delete next[k];
+    else (next as Record<string, unknown>)[k] = true;
+    onChange(Object.keys(next).length > 0 ? next : undefined);
+  };
+
+  const renderGroup = (group: 'weekly' | 'daily', label: string) => (
+    <View style={styles.bbiGroup}>
+      <ThemedText type="small" themeColor="textSecondary" style={styles.bbiGroupLabel}>
+        {label}
+      </ThemedText>
+      <View style={styles.chipRow}>
+        {BBI_OPTIONS.filter((o) => o.group === group).map((o) => {
+          const on = isOn(o.key);
+          return (
+            <Pressable key={String(o.key)} onPress={() => toggle(o.key)} hitSlop={4}>
+              <View
+                style={[
+                  styles.chip,
+                  { backgroundColor: on ? theme.tint : theme.backgroundElement },
+                ]}>
+                <ThemedText
+                  type={on ? 'smallBold' : 'small'}
+                  style={on ? styles.chipTextActive : undefined}
+                  themeColor={on ? undefined : 'textSecondary'}>
+                  {o.label}
+                </ThemedText>
+              </View>
+            </Pressable>
+          );
+        })}
+      </View>
+    </View>
+  );
+
+  return (
+    <View style={styles.bbiBox}>
+      {renderGroup('weekly', '周线')}
+      {renderGroup('daily', '日线')}
+    </View>
+  );
+}
+
 export function SignalPicker({
   value,
   onChange,
@@ -154,6 +227,59 @@ export function SignalPicker({
   );
 }
 
+/** 排除条件多选（ST / 科创板 / 创业板 / 北交所 / 银行） */
+export type ExclusionKey = 'excludeST' | 'excludeKCB' | 'excludeChiNext' | 'excludeBSE' | 'excludeBank';
+
+export const EXCLUSION_OPTIONS: { value: ExclusionKey; label: string }[] = [
+  { value: 'excludeST', label: '排除ST' },
+  { value: 'excludeKCB', label: '排除科创板' },
+  { value: 'excludeChiNext', label: '排除创业板' },
+  { value: 'excludeBSE', label: '排除北交所' },
+  { value: 'excludeBank', label: '排除银行' },
+];
+
+export function ExclusionPicker({
+  value,
+  onChange,
+}: {
+  value: Partial<Record<ExclusionKey, boolean>> | undefined;
+  onChange: (v: Partial<Record<ExclusionKey, boolean>> | undefined) => void;
+}) {
+  const theme = useTheme();
+  const active = (k: ExclusionKey) => !!value?.[k];
+
+  const toggle = (k: ExclusionKey) => {
+    const next = { ...(value ?? {}) };
+    if (next[k]) delete next[k];
+    else next[k] = true;
+    onChange(Object.keys(next).length > 0 ? next : undefined);
+  };
+
+  return (
+    <View style={styles.chipRow}>
+      {EXCLUSION_OPTIONS.map((o) => {
+        const on = active(o.value);
+        return (
+          <Pressable key={o.value} onPress={() => toggle(o.value)} hitSlop={4}>
+            <View
+              style={[
+                styles.chip,
+                { backgroundColor: on ? theme.tint : theme.backgroundElement },
+              ]}>
+              <ThemedText
+                type={on ? 'smallBold' : 'small'}
+                style={on ? styles.chipTextActive : undefined}
+                themeColor={on ? undefined : 'textSecondary'}>
+                {o.label}
+              </ThemedText>
+            </View>
+          </Pressable>
+        );
+      })}
+    </View>
+  );
+}
+
 /** 小节标题 */
 export function SectionTitle({ children, hint }: { children: string; hint?: string }) {
   return (
@@ -180,6 +306,9 @@ const styles = StyleSheet.create({
     borderRadius: Spacing.three,
   },
   chipTextActive: { color: '#ffffff' },
+  bbiBox: { gap: 10 },
+  bbiGroup: { gap: 6 },
+  bbiGroupLabel: { fontSize: 12 },
   sectionTitle: {
     flexDirection: 'row',
     alignItems: 'baseline',

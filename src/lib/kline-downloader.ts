@@ -6,7 +6,7 @@
  * 支持限速（串行 + 间隔），避免批量下载时被限流。
  */
 
-import { fetchKlines } from '@/lib/eastmoney';
+import { fetchKlines } from '@/lib/api/failover';
 import { loadKlines, saveKlines, getLastUpdate } from '@/lib/kline-db';
 import type { KlineBar, KlinePeriod } from '@/types/stock';
 
