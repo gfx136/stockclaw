@@ -28,9 +28,12 @@ export interface DataSource {
 /** 市场代码 → 各源用的证券标识 */
 export function toSinaSymbol(code: string): string {
   const c = code.replace(/\D/g, '');
-  return /^6/.test(c) ? `sh${c}` : `sz${c}`;
+  if (/^6/.test(c)) return `sh${c}`;
+  // 北交所：43/82/83/87/88/920/430/830/870 等（4、8、920 开头）
+  if (/^(4|8|920)/.test(c)) return `bj${c}`;
+  return `sz${c}`;
 }
 
 export function toTencentSymbol(code: string): string {
-  return toSinaSymbol(code); // 腾讯与新浪同为 sh/sz 前缀
+  return toSinaSymbol(code); // 腾讯与新浪同为 sh/sz/bj 前缀
 }
