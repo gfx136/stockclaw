@@ -16,7 +16,6 @@
 import { calcAllIndicators, snapshotAt, nthLast, sma } from '@/lib/indicators';
 import { matchBBIGroup, matchWeeklyBBI } from '@/lib/weekly-bbi';
 import {
-  isHS300,
   rankToTier,
   ruleLabel,
   type FilterSet,
@@ -111,14 +110,14 @@ export function matchBase(
   }
 
   if (filter.capTiers && filter.capTiers.length > 0) {
-    // 排名制分档：大盘 Top100 / 中盘 101-300 / 小盘 301-500 / 长尾 >500 / 沪深300(Top300)
+    // 排名制分档：大盘 Top100 / 中盘 101-300 / 小盘 301-500
     const rank = rankMap?.get(stock.code);
     if (rank === undefined) return false;
-    const tierHit = filter.capTiers.includes(rankToTier(rank));
-    const hs300Hit = filter.capTiers.includes('hs300') && isHS300(rank);
-    if (!tierHit && !hs300Hit) return false;
+    if (!filter.capTiers.includes(rankToTier(rank))) return false;
   }
   if (!inRange(stock.marketCap, filter.marketCapRange)) return false;
+  if (!inRange(stock.floatCap, filter.floatCapRange)) return false;
+  if (!inRange(stock.amount, filter.amountRange)) return false;
   if (!inRange(stock.pe, filter.peRange)) return false;
   if (!inRange(stock.changePercent, filter.changeRange)) return false;
   if (!inRange(stock.turnover, filter.turnoverRange)) return false;
@@ -299,14 +298,71 @@ function judgeRule(rule: IndicatorRule, series: IndicatorSeries, bars: KlineBar[
       const m = at(series.ma[26]);
       return b !== undefined && m !== undefined && b > m;
     }
+    case 'bbi_w_bull': {
+      // 周线红柱：最新周线 bar 收盘 > 开盘（严格大于）
+      return close > bars[i].open;
+    }
+  }
+}
+
+/**
+ * 规则的默认适用周期（规格 §3.1）：
+ * - 周期无关规则（MA/BOLL/MACD/KDJ/RSI）→ 60分钟/日/周/月 四周期全部生效
+ * - BBI 组规则自带周期标签（日线/周线定向）
+ */
+export function defaultPeriodsForRule(rule: IndicatorRule): KlinePeriod[] {
+  switch (rule.kind) {
+    case 'bbi_w_close_gt':
+    case 'bbi_w_gt_ma26':
+    case 'bbi_w_bull':
+      return ['weekly'];
+    case 'bbi_close_gt':
+    case 'bbi_4close_gt':
+    case 'bbi_gt_ma26':
+      return ['daily'];
+    default:
+      return ['60min', 'daily', 'weekly', 'monthly'];
+  }
+}
+
+/** 规则判定的最小 K 线根数（数据窗口，规格 §3.2） */
+function minBarsForRule(rule: IndicatorRule): number {  switch (rule.kind) {
+    case 'ma_above':
+    case 'ma_below':
+      return (rule.value ?? 20) + 1;
+    case 'boll_above_upper':
+    case 'boll_above_mid':
+    case 'boll_below_mid':
+    case 'boll_below_lower':
+      return 21;
+    case 'macd_hist_pos':
+    case 'macd_hist_neg':
+    case 'macd_golden':
+    case 'macd_dead':
+      return 36;
+    case 'kdj_gt':
+    case 'kdj_lt':
+      return 11;
+    case 'rsi_gt':
+    case 'rsi_lt':
+      return 16;
+    // BBI 日线规则需 ≥ 25 根（BBI 24 根 + 连续4根多3根历史）
+    case 'bbi_close_gt':
+    case 'bbi_4close_gt':
+    case 'bbi_gt_ma26':
+      return 25;
+    // BBI 周线规则需 ≥ 27 根（MA26 26 根 + 1）
+    case 'bbi_w_close_gt':
+    case 'bbi_w_gt_ma26':
+    case 'bbi_w_bull':
+      return 27;
   }
 }
 
 /**
  * 判定一只股票是否命中所有规则（AND）。
- * 每条规则在其选中的每个周期判定：该周期无本地数据则跳过该周期；
- * 一条规则所有选中周期都无数据 → 该规则视为不命中（数据不足）。
- * 返回命中标签。
+ * 规格 §3.1：周期无关规则对四周期全部生效；每条规则在其每个选中周期都须满足。
+ * 某周期本地数据不足 → 该股票计入「未参与」（noData），不是简单未命中。
  */
 export function matchRules(
   stock: Stock,
@@ -317,8 +373,8 @@ export function matchRules(
   let anyNoData = false;
 
   for (const rule of rules) {
-    const periods = rule.periods && rule.periods.length > 0 ? rule.periods : (['daily'] as KlinePeriod[]);
-    let ruleJudged = false;
+    const periods = rule.periods && rule.periods.length > 0 ? rule.periods : defaultPeriodsForRule(rule);
+    const minBars = minBarsForRule(rule);
     let rulePass = true;
 
     for (const period of periods) {
@@ -328,8 +384,12 @@ export function matchRules(
       } catch {
         bars = undefined;
       }
-      if (!bars || bars.length < 35) continue; // 该周期数据不足，跳过该周期
-      ruleJudged = true;
+      // 数据不足 → 计未参与（不是未命中）
+      if (!bars || bars.length < minBars) {
+        anyNoData = true;
+        rulePass = false;
+        break;
+      }
       const series = calcAllIndicators(bars, collectMaPeriods([rule]));
       if (!judgeRule(rule, series, bars)) {
         rulePass = false;
@@ -337,10 +397,6 @@ export function matchRules(
       }
     }
 
-    if (!ruleJudged) {
-      anyNoData = true; // 这条规则没有任何周期的数据可判
-      rulePass = false;
-    }
     if (!rulePass) return { pass: false, hits: [], noData: anyNoData };
     hits.push(ruleLabel(rule));
   }
@@ -497,14 +553,18 @@ export const MIN_BARS_FOR_SIGNAL = 60;
  *
  * @param stocks        行情全量列表
  * @param filter        条件集
- * @param klineProvider 本地 K 线提供者（有信号条件时必需）
+ * @param klineProvider 本地 K 线提供者（有信号/规则条件时必需）
  * @param limit         结果上限（默认 300，避免列表过长）
+ * @param favorites     自选代码集合（onlyFavorites 时用）
+ * @param onProgress    进度回调（已扫描 / 总数）
  */
 export function filterStocks(
   stocks: Stock[],
   filter: FilterSet,
   klineProvider?: KlineProvider,
-  limit = 300
+  limit = 300,
+  favorites?: Set<string>,
+  onProgress?: (scanned: number, total: number) => void
 ): FilterOutput {
   const needSignals = hasAnySignal(filter.signals);
   const needRules = hasAnyRules(filter);
@@ -527,7 +587,12 @@ export function filterStocks(
     rankMap = new Map(sorted.map((s, i) => [s.code, i + 1]));
   }
 
-  for (const stock of stocks) {
+  for (let i = 0; i < stocks.length; i++) {
+    const stock = stocks[i];
+    // 进度回调（每 200 只报一次，避免频繁 setState）
+    if (onProgress && i % 200 === 0) onProgress(i, stocks.length);
+    // 仅自选
+    if (filter.onlyFavorites && favorites && !favorites.has(stock.code)) continue;
     if (!matchBase(stock, filter, rankMap)) continue;
     passedBase++;
 

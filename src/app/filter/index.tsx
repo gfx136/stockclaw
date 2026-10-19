@@ -6,6 +6,7 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
+  Switch,
   Text,
   TextInput,
   View,
@@ -17,11 +18,11 @@ import { RulePicker } from '@/components/rule-picker';
 import { ThemedText } from '@/components/themed-text';
 import { useTheme } from '@/hooks/use-theme';
 import { fetchAllStocks } from '@/lib/api/failover';
+import { loadFavorites } from '@/lib/favorites';
 import { filterStocks, hasAnyRules, type KlineProvider } from '@/lib/filter-engine';
 import { loadFilterSets, saveFilterSet, type SavedFilterSet } from '@/lib/filter-sets';
 import { getFilterState, setFilter, setFilterOutput, setFilterRunning, subscribeFilter } from '@/lib/filter-store';
 import { multiPeriodProvider, preloadKlineMap } from '@/lib/kline-db';
-import { isActivated } from '@/lib/license';
 import type { FilterSet, KlinePeriod, MarketCapTier } from '@/types/stock';
 
 /**
@@ -64,17 +65,6 @@ export default function FilterScreen() {
   };
 
   const run = useCallback(async () => {
-    // 免费分层：选股是会员功能（开发模式下不锁，便于测试）
-    if (!__DEV__) {
-      const activated = await isActivated();
-      if (!activated) {
-        Alert.alert('选股功能需要开通会员', '浏览与自选始终免费', [
-          { text: '取消', style: 'cancel' },
-          { text: '去开通', onPress: () => router.push('/license') },
-        ]);
-        return;
-      }
-    }
     setFilterRunning(true);
     setMsg('正在筛选股票…');
     try {
@@ -83,6 +73,10 @@ export default function FilterScreen() {
         setMsg('未取到行情数据，请检查网络。');
         return;
       }
+      // 仅自选时需要自选集合
+      const favCodes = filter.onlyFavorites
+        ? new Set((await loadFavorites()).map((f) => f.code))
+        : undefined;
 
       let provider: KlineProvider | undefined;
       const periods = neededPeriods();
@@ -99,7 +93,9 @@ export default function FilterScreen() {
         }
       }
 
-      const out = filterStocks(stocks, filter, provider, 300);
+      const out = filterStocks(stocks, filter, provider, 300, favCodes, (scanned, total) => {
+        setMsg(`正在筛选股票… ${scanned}/${total}`);
+      });
       setFilterOutput(out);
       router.back();
       router.navigate('/(tabs)/results');
@@ -211,12 +207,26 @@ export default function FilterScreen() {
           <RangeInput label="换手率(%)" min={filter.turnoverRange?.min} max={filter.turnoverRange?.max}
             onMin={(v) => patch({ turnoverRange: { ...filter.turnoverRange, min: num(v) } })}
             onMax={(v) => patch({ turnoverRange: { ...filter.turnoverRange, max: num(v) } })} />
-          <RangeInput label="总市值(亿)" min={filter.marketCapRange?.min} max={filter.marketCapRange?.max}
-            onMin={(v) => patch({ marketCapRange: { ...filter.marketCapRange, min: num(v) ? num(v)! * 1e8 : undefined } })}
-            onMax={(v) => patch({ marketCapRange: { ...filter.marketCapRange, max: num(v) ? num(v)! * 1e8 : undefined } })} />
+          <RangeInput label="总市值(万元)" min={filter.marketCapRange?.min !== undefined ? filter.marketCapRange.min / 1e4 : undefined} max={filter.marketCapRange?.max !== undefined ? filter.marketCapRange.max / 1e4 : undefined}
+            onMin={(v) => patch({ marketCapRange: { ...filter.marketCapRange, min: num(v) ? num(v)! * 1e4 : undefined } })}
+            onMax={(v) => patch({ marketCapRange: { ...filter.marketCapRange, max: num(v) ? num(v)! * 1e4 : undefined } })} />
+          <RangeInput label="流通市值(万元)" min={filter.floatCapRange?.min !== undefined ? filter.floatCapRange.min / 1e4 : undefined} max={filter.floatCapRange?.max !== undefined ? filter.floatCapRange.max / 1e4 : undefined}
+            onMin={(v) => patch({ floatCapRange: { ...filter.floatCapRange, min: num(v) ? num(v)! * 1e4 : undefined } })}
+            onMax={(v) => patch({ floatCapRange: { ...filter.floatCapRange, max: num(v) ? num(v)! * 1e4 : undefined } })} />
+          <RangeInput label="成交额(万元)" min={filter.amountRange?.min !== undefined ? filter.amountRange.min / 1e4 : undefined} max={filter.amountRange?.max !== undefined ? filter.amountRange.max / 1e4 : undefined}
+            onMin={(v) => patch({ amountRange: { ...filter.amountRange, min: num(v) ? num(v)! * 1e4 : undefined } })}
+            onMax={(v) => patch({ amountRange: { ...filter.amountRange, max: num(v) ? num(v)! * 1e4 : undefined } })} />
           <RangeInput label="跳空缺口≥(%)" min={filter.gapMin}
             onMin={(v) => patch({ gapMin: num(v) })}
             onMax={() => {}} single />
+          {/* 仅自选 */}
+          <View style={styles.switchRow}>
+            <ThemedText type="small" style={styles.switchLabel}>仅看自选</ThemedText>
+            <Switch
+              value={filter.onlyFavorites ?? false}
+              onValueChange={(v) => patch({ onlyFavorites: v || undefined })}
+            />
+          </View>
         </View>
 
         {/* 技术指标 */}
@@ -295,6 +305,8 @@ const styles = StyleSheet.create({
   rangeRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
   rangeLabel: { width: 96 },
   rangeInput: { flex: 1, height: 38, borderRadius: 8, paddingHorizontal: 12, fontSize: 15 },
+  switchRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 4 },
+  switchLabel: {},
   tip: { marginTop: 8, lineHeight: 20 },
   saveBtn: { height: 42, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
   saveBtnText: { fontSize: 14, fontWeight: '600' },

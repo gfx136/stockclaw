@@ -30,10 +30,6 @@ export default function RootLayout() {
               headerBackTitle: '关闭',
             }}
           />
-          <Stack.Screen
-            name="license"
-            options={{ title: '会员授权', headerBackTitle: '返回' }}
-          />
         </Stack>
         </ThemeProvider>
       </SafeAreaProvider>

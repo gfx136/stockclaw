@@ -1,4 +1,4 @@
-import { useFocusEffect, useRouter } from 'expo-router';
+import { useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -28,7 +28,6 @@ import {
   type LanguagePref,
   type ThemePref,
 } from '@/lib/prefs';
-import { daysLeft, getLicenseState, type LicenseState } from '@/lib/license';
 
 interface Stats {
   totalBars: number;
@@ -37,12 +36,11 @@ interface Stats {
 }
 
 /**
- * 设置页（产品规格 2.6）。
- * 会员 / 数据源 / 本地数据管理 / 后台下载 / 语言 / 外观 / 关于。
+ * 设置页（补充规格 §4）。
+ * 数据源 / 本地数据管理 / 后台下载 / 语言与外观 / 关于。
  */
 export default function SettingsScreen() {
   const theme = useTheme();
-  const router = useRouter();
   const [stats, setStats] = useState<Stats | null>(null);
   const [sourceMode, setSourceModeState] = useState<SourceMode>('auto');
   const [localMode, setLocalMode] = useState(true);
@@ -50,7 +48,6 @@ export default function SettingsScreen() {
   const [bgDownload, setBgDownload] = useState(false);
   const [language, setLanguageState] = useState<LanguagePref>('system');
   const [themePref, setThemePrefState] = useState<ThemePref>('system');
-  const [license, setLicense] = useState<LicenseState | null>(null);
   const [speedResults, setSpeedResults] = useState<SpeedTestResult[] | null>(null);
   const [testing, setTesting] = useState(false);
 
@@ -71,7 +68,6 @@ export default function SettingsScreen() {
         setBgDownload(await getBackgroundDownload());
         setLanguageState(await getLanguage());
         setThemePrefState(await getThemePref());
-        setLicense(await getLicenseState());
       })();
       return () => {
         active = false;
@@ -111,31 +107,10 @@ export default function SettingsScreen() {
     }
   }, []);
 
-  const licenseActive = !!license && license.expiry * 1000 > Date.now();
-
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]} edges={['top']}>
       <ScrollView contentContainerStyle={styles.content}>
         <ThemedText type="subtitle" style={styles.title}>设置</ThemedText>
-
-        {/* 会员 */}
-        <Section title="会员" theme={theme}>
-          <Pressable onPress={() => router.push('/license')}>
-            <View style={styles.row}>
-              <View style={styles.sourceLeft}>
-                <Text style={[styles.rowLabel, { color: theme.text }]}>选股功能</Text>
-                <Text style={[styles.sourceDesc, { color: theme.textSecondary }]}>
-                  {licenseActive && license
-                    ? `已激活 · 剩余 ${daysLeft(license)} 天`
-                    : '未激活 · 开通会员解锁选股'}
-                </Text>
-              </View>
-              <Text style={[styles.rowValue, { color: licenseActive ? '#0AA869' : theme.tint }]}>
-                {licenseActive ? '已激活' : '去开通 ›'}
-              </Text>
-            </View>
-          </Pressable>
-        </Section>
 
         {/* 数据源 */}
         <Section title="行情数据源" theme={theme}>

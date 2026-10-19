@@ -74,3 +74,10 @@ export async function setThemePref(v: ThemePref): Promise<void> {
   await setStr('theme', v);
   themeListeners.forEach((l) => l());
 }
+
+/** 首页排序键（规格 §1.4，持久化 pref_home_sort；结果页用 pref_results_sort 独立记忆） */
+export type HomeSortKey = 'code' | 'price' | 'changePercent' | 'amount' | 'turnover' | 'marketCap';
+export const getHomeSort = () => getStr<HomeSortKey>('home_sort', 'code');
+export const setHomeSort = (v: HomeSortKey) => setStr('home_sort', v);
+export const getResultsSort = () => getStr<HomeSortKey>('results_sort', 'code');
+export const setResultsSort = (v: HomeSortKey) => setStr('results_sort', v);

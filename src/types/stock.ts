@@ -71,8 +71,8 @@ export interface KlineBar {
 /** K 线周期 */
 export type KlinePeriod = '60min' | 'daily' | 'weekly' | 'monthly';
 
-/** 市值分层 */
-export type MarketCapTier = 'large' | 'mid' | 'small' | 'tail' | 'hs300';
+/** 市值分层（补充规格 §3.4：只有 大盘/中盘/小盘 三档） */
+export type MarketCapTier = 'large' | 'mid' | 'small';
 
 /** 收藏条目 */
 export interface FavoriteItem {
@@ -193,6 +193,10 @@ export interface FilterSet {
   capTiers?: MarketCapTier[];
   /** 市值区间（元） */
   marketCapRange?: RangeCondition;
+  /** 流通市值区间（元） */
+  floatCapRange?: RangeCondition;
+  /** 成交额区间（元） */
+  amountRange?: RangeCondition;
   /** 市盈率区间 */
   peRange?: RangeCondition;
   /** 涨跌幅区间 % */
@@ -215,6 +219,8 @@ export interface FilterSet {
   excludeBank?: boolean;
   /** 跳空缺口幅度下限 %（今日开盘 vs 昨日收盘） */
   gapMin?: number;
+  /** 仅自选：只在自选范围内筛选 */
+  onlyFavorites?: boolean;
   /**
    * 技术指标信号条件（扁平 boolean 形式，旧版）。
    * 注意：信号判定依赖本地 K 线缓存，未缓存的股票会被跳过——
@@ -264,12 +270,13 @@ export type IndicatorRuleKind =
   // RSI：RSI(14) > value / < value
   | 'rsi_gt'
   | 'rsi_lt'
-  // BBI：①收盘>BBI ②连续4日收盘>BBI ③BBI>MA26(日) ④周收盘>BBI ⑤周BBI>MA26
+  // BBI（周线/日线定向）：①日收盘>BBI ②日近4根连续收盘>BBI ③日BBI>MA26 ④周收盘>BBI ⑤周BBI>MA26 ⑥周线红柱(收>开)
   | 'bbi_close_gt'
   | 'bbi_4close_gt'
   | 'bbi_gt_ma26'
   | 'bbi_w_close_gt'
-  | 'bbi_w_gt_ma26';
+  | 'bbi_w_gt_ma26'
+  | 'bbi_w_bull';
 
 /** 一条技术指标规则 */
 export interface IndicatorRule {
@@ -298,11 +305,12 @@ export function ruleLabel(r: IndicatorRule): string {
     case 'kdj_lt': return `KDJ-J<${v ?? 20}`;
     case 'rsi_gt': return `RSI14>${v ?? 70}`;
     case 'rsi_lt': return `RSI14<${v ?? 30}`;
-    case 'bbi_close_gt': return '收盘>BBI';
-    case 'bbi_4close_gt': return '连续4日收盘>BBI';
-    case 'bbi_gt_ma26': return 'BBI>MA26';
-    case 'bbi_w_close_gt': return '周收盘>BBI';
-    case 'bbi_w_gt_ma26': return '周BBI>MA26';
+    case 'bbi_close_gt': return '日:收盘>BBI';
+    case 'bbi_4close_gt': return '日:连续4收盘>BBI';
+    case 'bbi_gt_ma26': return '日:BBI>MA26';
+    case 'bbi_w_close_gt': return '周:收盘>BBI';
+    case 'bbi_w_gt_ma26': return '周:BBI>MA26';
+    case 'bbi_w_bull': return '周:红柱(收>开)';
   }
 }
 
@@ -314,31 +322,21 @@ export const CAP_TIER_THRESHOLDS: Record<string, RangeCondition> = {
 };
 
 /**
- * 按市值排名分档（与界面规格一致）：
+ * 按市值排名分档（补充规格 §3.4）：
  *   大盘 = 市值排名 Top 100
  *   中盘 = 101-300
  *   小盘 = 301-500
- *   长尾 = >500
- *   沪深300 = 市值排名 Top 300（成分股近似，按市值排名代替官方成分名单）
  * rank 从 1 开始（市值降序第 1 名）。
  */
 export function rankToTier(rank: number): MarketCapTier {
   if (rank <= 100) return 'large';
   if (rank <= 300) return 'mid';
-  if (rank <= 500) return 'small';
-  return 'tail';
+  return 'small';
 }
 
-/** 是否沪深300（市值前300近似） */
-export function isHS300(rank: number): boolean {
-  return rank <= 300;
-}
-
-/** 市值分层中文名（与界面规格一致） */
+/** 市值分层中文名（补充规格 §3.4） */
 export const CAP_TIER_LABELS: Record<MarketCapTier, string> = {
   large: '大盘(Top100)',
   mid: '中盘(101-300)',
   small: '小盘(301-500)',
-  tail: '长尾(>500)',
-  hs300: '沪深300',
 };

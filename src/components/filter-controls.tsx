@@ -1,4 +1,4 @@
-import { Pressable, StyleSheet, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
 import { Spacing } from '@/constants/theme';
@@ -56,7 +56,7 @@ export function Chips<T extends string>({
   );
 }
 
-/** 市值分层多选（快捷） */
+/** 市值分层多选（补充规格 §3.4：仅 大盘/中盘/小盘 三档，含「全选」） */
 export function CapTierPicker({
   value,
   onChange,
@@ -64,19 +64,25 @@ export function CapTierPicker({
   value: MarketCapTier[] | undefined;
   onChange: (v: MarketCapTier[] | undefined) => void;
 }) {
+  const theme = useTheme();
+  const ALL: MarketCapTier[] = ['large', 'mid', 'small'];
+  const allOn = value && ALL.every((t) => value.includes(t));
   return (
-    <Chips<MarketCapTier>
-      multi
-      value={value}
-      onChange={(v) => onChange(v as MarketCapTier[] | undefined)}
-      options={[
-        { value: 'large', label: CAP_TIER_LABELS.large },
-        { value: 'mid', label: CAP_TIER_LABELS.mid },
-        { value: 'small', label: CAP_TIER_LABELS.small },
-        { value: 'tail', label: CAP_TIER_LABELS.tail },
-        { value: 'hs300', label: CAP_TIER_LABELS.hs300 },
-      ]}
-    />
+    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+      <Chips<MarketCapTier>
+        multi
+        value={value}
+        onChange={(v) => onChange(v as MarketCapTier[] | undefined)}
+        options={[
+          { value: 'large', label: CAP_TIER_LABELS.large },
+          { value: 'mid', label: CAP_TIER_LABELS.mid },
+          { value: 'small', label: CAP_TIER_LABELS.small },
+        ]}
+      />
+      <Pressable onPress={() => onChange(allOn ? undefined : ALL)} hitSlop={6}>
+        <Text style={{ fontSize: 13, color: allOn ? theme.tint : theme.textSecondary }}>全选</Text>
+      </Pressable>
+    </View>
   );
 }
 

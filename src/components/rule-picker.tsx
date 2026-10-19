@@ -4,9 +4,11 @@ import { useTheme } from '@/hooks/use-theme';
 import { ruleLabel, type IndicatorRule, type IndicatorRuleKind, type KlinePeriod } from '@/types/stock';
 
 /**
- * 技术指标规则选择器（产品规格 2.2 B）。
- * 按指标分组点选规则；每条规则可指定适用周期（60分钟/日/周/月）；
- * 已选规则显示为标签，可改周期、可删除。规则间是 AND 组合。
+ * 技术指标规则选择器（补充规格 §3）。
+ * 按指标分组点选规则；规则间是 AND 组合。
+ * 周期规则（规格 §3.1）：
+ * - 周期无关规则（MA/BOLL/MACD/KDJ/RSI）→ 60分钟/日/周/月 四周期全部生效（固定）
+ * - BBI 组规则自带周期标签（日线/周线定向）
  */
 
 interface RuleOption {
@@ -30,10 +32,10 @@ const RULE_GROUPS: { group: string; options: RuleOption[] }[] = [
   {
     group: 'BOLL 布林带',
     options: [
-      { kind: 'boll_above_upper', label: '上轨上方' },
+      { kind: 'boll_above_upper', label: '触上轨' },
       { kind: 'boll_above_mid', label: '中轨上方' },
       { kind: 'boll_below_mid', label: '中轨下方' },
-      { kind: 'boll_below_lower', label: '下轨下方' },
+      { kind: 'boll_below_lower', label: '触下轨' },
     ],
   },
   {
@@ -48,8 +50,8 @@ const RULE_GROUPS: { group: string; options: RuleOption[] }[] = [
   {
     group: 'KDJ (J值)',
     options: [
-      { kind: 'kdj_lt', value: 30, label: '超卖 J<30' },
-      { kind: 'kdj_gt', value: 70, label: '超买 J>70' },
+      { kind: 'kdj_lt', value: 0, label: '超卖 J<0' },
+      { kind: 'kdj_gt', value: 100, label: '超买 J>100' },
     ],
   },
   {
@@ -60,28 +62,30 @@ const RULE_GROUPS: { group: string; options: RuleOption[] }[] = [
     ],
   },
   {
-    group: 'BBI',
+    group: 'BBI（周线/日线定向）',
     options: [
-      { kind: 'bbi_close_gt', label: '收盘>BBI' },
-      { kind: 'bbi_4close_gt', label: '连续4日收盘>BBI' },
-      { kind: 'bbi_gt_ma26', label: 'BBI>MA26' },
-      { kind: 'bbi_w_close_gt', label: '周收盘>BBI' },
-      { kind: 'bbi_w_gt_ma26', label: '周BBI>MA26' },
+      { kind: 'bbi_close_gt', label: '日:收盘>BBI' },
+      { kind: 'bbi_4close_gt', label: '日:连续4收盘>BBI' },
+      { kind: 'bbi_gt_ma26', label: '日:BBI>MA26' },
+      { kind: 'bbi_w_close_gt', label: '周:收盘>BBI' },
+      { kind: 'bbi_w_gt_ma26', label: '周:BBI>MA26' },
+      { kind: 'bbi_w_bull', label: '周:红柱(收>开)' },
     ],
   },
 ];
 
-const PERIOD_OPTS: { key: KlinePeriod; label: string }[] = [
-  { key: '60min', label: '60分' },
-  { key: 'daily', label: '日' },
-  { key: 'weekly', label: '周' },
-  { key: 'monthly', label: '月' },
-];
-
-/** 规则默认周期：BBI 周线规则固定周线，其余默认日线 */
+/** 规则默认周期（规格 §3.1） */
 function defaultPeriods(kind: IndicatorRuleKind): KlinePeriod[] {
-  if (kind === 'bbi_w_close_gt' || kind === 'bbi_w_gt_ma26') return ['weekly'];
-  return ['daily'];
+  if (kind.startsWith('bbi_w_')) return ['weekly'];
+  if (kind.startsWith('bbi_')) return ['daily'];
+  return ['60min', 'daily', 'weekly', 'monthly'];
+}
+
+/** 规则的周期标签（固定显示，规格 §3.1） */
+function periodLabelOf(kind: IndicatorRuleKind): string {
+  if (kind.startsWith('bbi_w_')) return '周线';
+  if (kind.startsWith('bbi_')) return '日线';
+  return '四周期';
 }
 
 function ruleKey(r: { kind: IndicatorRuleKind; value?: number }): string {
@@ -109,18 +113,6 @@ export function RulePicker({
     }
   };
 
-  const togglePeriod = (target: IndicatorRule, period: KlinePeriod) => {
-    onChange(
-      rules.map((r) => {
-        if (ruleKey(r) !== ruleKey(target)) return r;
-        const cur = r.periods ?? ['daily'];
-        const next = cur.includes(period) ? cur.filter((p) => p !== period) : [...cur, period];
-        // 至少保留一个周期
-        return { ...r, periods: next.length > 0 ? next : cur };
-      })
-    );
-  };
-
   const removeRule = (target: IndicatorRule) => {
     onChange(rules.filter((r) => ruleKey(r) !== ruleKey(target)));
   };
@@ -138,29 +130,13 @@ export function RulePicker({
                   <Text style={[styles.removeBtn, { color: theme.textSecondary }]}>✕</Text>
                 </Pressable>
               </View>
-              {/* 周期选择 */}
-              <View style={styles.periodRow}>
-                {PERIOD_OPTS.map((p) => {
-                  const on = (r.periods ?? ['daily']).includes(p.key);
-                  return (
-                    <Pressable key={p.key} onPress={() => togglePeriod(r, p.key)} hitSlop={4}>
-                      <Text
-                        style={[
-                          styles.periodChip,
-                          { color: on ? theme.tint : theme.textSecondary, fontWeight: on ? '700' : '400' },
-                        ]}>
-                        {p.label}
-                      </Text>
-                    </Pressable>
-                  );
-                })}
-              </View>
+              <Text style={[styles.periodTag, { color: theme.textSecondary }]}>{periodLabelOf(r.kind)}</Text>
             </View>
           ))}
         </View>
       ) : (
         <Text style={[styles.emptyHint, { color: theme.textSecondary }]}>
-          点下方指标添加条件，多条为「并且」关系
+          点下方指标添加条件，多条为「并且」关系；每个条件在所有适用周期上都须满足
         </Text>
       )}
 
@@ -190,12 +166,11 @@ const styles = StyleSheet.create({
   box: { gap: 12 },
   emptyHint: { fontSize: 12, lineHeight: 18 },
   selectedBox: { gap: 8 },
-  selectedItem: { borderRadius: 8, padding: 8, gap: 6 },
+  selectedItem: { borderRadius: 8, padding: 10, gap: 4 },
   selectedTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   selectedLabel: { fontSize: 13, fontWeight: '600' },
   removeBtn: { fontSize: 14, paddingHorizontal: 4 },
-  periodRow: { flexDirection: 'row', gap: 12 },
-  periodChip: { fontSize: 11 },
+  periodTag: { fontSize: 11 },
   group: { gap: 6 },
   groupLabel: { fontSize: 12 },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
