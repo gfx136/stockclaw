@@ -1,42 +1,48 @@
 import { useRouter } from 'expo-router';
-import { useCallback, useState, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   Pressable,
   ScrollView,
   StyleSheet,
-  Switch,
   Text,
   TextInput,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { BBIPicker, CapTierPicker, ExclusionPicker, SectionTitle, SignalPicker } from '@/components/filter-controls';
+import { CapTierPicker, ExclusionPicker, SectionTitle } from '@/components/filter-controls';
+import { RulePicker } from '@/components/rule-picker';
 import { ThemedText } from '@/components/themed-text';
 import { useTheme } from '@/hooks/use-theme';
 import { fetchAllStocks } from '@/lib/api/failover';
-import { filterStocks, type KlineProvider } from '@/lib/filter-engine';
+import { filterStocks, hasAnyRules, type KlineProvider } from '@/lib/filter-engine';
+import { loadFilterSets, saveFilterSet, type SavedFilterSet } from '@/lib/filter-sets';
 import { getFilterState, setFilter, setFilterOutput, setFilterRunning, subscribeFilter } from '@/lib/filter-store';
-import { mapToProvider, multiPeriodProvider, preloadKlineMap } from '@/lib/kline-db';
-import type { FilterSet, MarketCapTier, SignalCondition, Stock } from '@/types/stock';
+import { multiPeriodProvider, preloadKlineMap } from '@/lib/kline-db';
+import { isActivated } from '@/lib/license';
+import type { FilterSet, KlinePeriod, MarketCapTier } from '@/types/stock';
 
 /**
- * 筛选条件弹层（对应界面规格的 filter 页）。
- * 从全部股票页头部「筛选」按钮打开（modal）。
- * 「应用筛选」运行后：结果存 filter-store → 关闭弹层 → 跳转到「选股结果」tab。
+ * 选股条件面板（产品规格 2.2，底部弹出 Sheet）。
+ * 基础面（区间/市值档位/缺口）+ 排除条件 + 技术指标规则（含适用周期）。
+ * 运行后结果写 filter-store → 关弹层 → 跳「筛选结果」页。
  */
 export default function FilterScreen() {
   const theme = useTheme();
   const router = useRouter();
 
-  // 条件与全部股票页共享（filter-store）
   const storeState = useSyncExternalStore(subscribeFilter, getFilterState, getFilterState);
   const filter = storeState.filter;
   const running = storeState.running;
 
   const [msg, setMsg] = useState<string | null>(null);
-  const [useSignals, setUseSignals] = useState(!!filter.signals);
+  const [savedSets, setSavedSets] = useState<SavedFilterSet[]>([]);
+
+  useEffect(() => {
+    (async () => setSavedSets(await loadFilterSets()))();
+  }, []);
 
   const patch = useCallback((p: Partial<FilterSet>) => {
     setFilter({ ...getFilterState().filter, ...p });
@@ -47,34 +53,54 @@ export default function FilterScreen() {
     return Number.isFinite(v) ? v : undefined;
   };
 
+  /** 收集本次筛选需要的 K 线周期 */
+  const neededPeriods = (): Set<KlinePeriod> => {
+    const s = new Set<KlinePeriod>();
+    if (filter.gapMin !== undefined) s.add('daily');
+    for (const r of filter.rules ?? []) {
+      for (const p of r.periods ?? ['daily']) s.add(p);
+    }
+    return s;
+  };
+
   const run = useCallback(async () => {
+    // 免费分层：选股是会员功能（开发模式下不锁，便于测试）
+    if (!__DEV__) {
+      const activated = await isActivated();
+      if (!activated) {
+        Alert.alert('选股功能需要开通会员', '浏览与自选始终免费', [
+          { text: '取消', style: 'cancel' },
+          { text: '去开通', onPress: () => router.push('/license') },
+        ]);
+        return;
+      }
+    }
     setFilterRunning(true);
-    setMsg(null);
+    setMsg('正在筛选股票…');
     try {
-      const stocks: Stock[] = await fetchAllStocks(200);
+      const stocks = await fetchAllStocks(200);
       if (stocks.length === 0) {
         setMsg('未取到行情数据，请检查网络。');
         return;
       }
 
       let provider: KlineProvider | undefined;
-      if (useSignals) {
-        const daily = await preloadKlineMap('daily', 500);
-        if (filter.signals?.weeklyBBIStrategy || filter.signals?.weeklyCloseGtBBI || filter.signals?.weeklyBull || filter.signals?.weeklyBBIGtMA26) {
-          const weekly = await preloadKlineMap('weekly', 200);
-          provider = multiPeriodProvider(daily, weekly);
-          if (weekly.size === 0) setMsg('本地还没有周线 K 线缓存，请先在个股详情页下载（含周线）。');
-        } else {
-          provider = mapToProvider(daily);
+      const periods = neededPeriods();
+      if (periods.size > 0) {
+        const maps: Partial<Record<KlinePeriod, Awaited<ReturnType<typeof preloadKlineMap>>>> = {};
+        for (const p of periods) {
+          maps[p] = await preloadKlineMap(p, p === 'daily' ? 500 : 260);
         }
-        if (daily.size === 0 && !filter.signals?.weeklyBBIStrategy) {
-          setMsg('本地还没有 K 线缓存，请先到个股详情页下载。');
+        provider = multiPeriodProvider(maps);
+        const missing = [...periods].filter((p) => (maps[p]?.size ?? 0) === 0);
+        if (missing.length > 0) {
+          const label = missing.map((p) => ({ '60min': '60分钟', daily: '日线', weekly: '周线', monthly: '月线' }[p])).join('/');
+          setMsg(`本地还没有${label} K 线缓存。请先到个股详情页下载对应周期。`);
         }
       }
 
       const out = filterStocks(stocks, filter, provider, 300);
       setFilterOutput(out);
-      // 关闭弹层并跳到选股结果页
       router.back();
       router.navigate('/(tabs)/results');
     } catch (e) {
@@ -82,32 +108,67 @@ export default function FilterScreen() {
     } finally {
       setFilterRunning(false);
     }
-  }, [filter, useSignals, router]);
+  }, [filter, router]);
 
   const clearAll = () => {
     setFilter({});
-    setUseSignals(false);
     setMsg(null);
   };
 
+  /** 保存为常用条件 */
+  const onSaveSet = () => {
+    Alert.prompt?.('保存为常用条件', '输入条件名称', async (name) => {
+      if (!name?.trim()) return;
+      setSavedSets(await saveFilterSet(name.trim(), filter));
+    }) ??
+      // Android 无 Alert.prompt，用固定名
+      (async () => {
+        const name = `条件${savedSets.length + 1}`;
+        setSavedSets(await saveFilterSet(name, filter));
+      })();
+  };
+
+  const applySet = (s: SavedFilterSet) => {
+    setFilter(s.filter);
+    setMsg(null);
+  };
+
+  const hasKlineConds = hasAnyRules(filter) || filter.gapMin !== undefined;
+
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]} edges={['top', 'bottom']}>
-      {/* 顶部：清空 / 标题 / 应用 */}
+      {/* 顶部：清空 / 标题 / 运行 */}
       <View style={styles.topBar}>
         <Pressable onPress={clearAll} hitSlop={8}>
-          <ThemedText type="small" themeColor="textSecondary">清空</ThemedText>
+          <ThemedText type="small" themeColor="textSecondary">清除条件</ThemedText>
         </Pressable>
         <ThemedText type="smallBold">筛选条件</ThemedText>
         <Pressable onPress={run} disabled={running} hitSlop={8}>
           {running ? (
             <ActivityIndicator size="small" />
           ) : (
-            <ThemedText type="smallBold" style={{ color: theme.tint }}>应用筛选</ThemedText>
+            <ThemedText type="smallBold" style={{ color: theme.tint }}>运行筛选</ThemedText>
           )}
         </Pressable>
       </View>
 
       <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
+        {/* 常用条件 */}
+        {savedSets.length > 0 ? (
+          <View style={styles.block}>
+            <SectionTitle>常用条件</SectionTitle>
+            <View style={styles.chipRow}>
+              {savedSets.map((s) => (
+                <Pressable key={s.name} onPress={() => applySet(s)} hitSlop={4}>
+                  <View style={[styles.chip, { backgroundColor: theme.backgroundElement }]}>
+                    <Text style={[styles.chipText, { color: theme.text }]}>{s.name}</Text>
+                  </View>
+                </Pressable>
+              ))}
+            </View>
+          </View>
+        ) : null}
+
         {/* 排除条件 */}
         <View style={styles.block}>
           <SectionTitle hint="勾选即排除">排除条件</SectionTitle>
@@ -129,61 +190,54 @@ export default function FilterScreen() {
           />
         </View>
 
-        {/* 市值分层 */}
+        {/* 市值档位 */}
         <View style={styles.block}>
-          <SectionTitle>市值分层</SectionTitle>
+          <SectionTitle hint="按市值排名分档">市值档位</SectionTitle>
           <CapTierPicker
             value={filter.capTiers}
             onChange={(v) => patch({ capTiers: v as MarketCapTier[] | undefined })}
           />
         </View>
 
-        {/* 指标区间 */}
+        {/* 基础面区间 */}
         <View style={styles.block}>
-          <SectionTitle hint="留空表示不限">指标区间</SectionTitle>
-          <RangeInput label="市盈率(PE)" min={filter.peRange?.min} max={filter.peRange?.max}
-            onMin={(v) => patch({ peRange: { ...filter.peRange, min: num(v) } })}
-            onMax={(v) => patch({ peRange: { ...filter.peRange, max: num(v) } })} />
+          <SectionTitle hint="留空表示不限">行情区间</SectionTitle>
+          <RangeInput label="价格(元)" min={filter.priceRange?.min} max={filter.priceRange?.max}
+            onMin={(v) => patch({ priceRange: { ...filter.priceRange, min: num(v) } })}
+            onMax={(v) => patch({ priceRange: { ...filter.priceRange, max: num(v) } })} />
           <RangeInput label="涨跌幅(%)" min={filter.changeRange?.min} max={filter.changeRange?.max}
             onMin={(v) => patch({ changeRange: { ...filter.changeRange, min: num(v) } })}
             onMax={(v) => patch({ changeRange: { ...filter.changeRange, max: num(v) } })} />
           <RangeInput label="换手率(%)" min={filter.turnoverRange?.min} max={filter.turnoverRange?.max}
             onMin={(v) => patch({ turnoverRange: { ...filter.turnoverRange, min: num(v) } })}
             onMax={(v) => patch({ turnoverRange: { ...filter.turnoverRange, max: num(v) } })} />
-          <RangeInput label="最新价(元)" min={filter.priceRange?.min} max={filter.priceRange?.max}
-            onMin={(v) => patch({ priceRange: { ...filter.priceRange, min: num(v) } })}
-            onMax={(v) => patch({ priceRange: { ...filter.priceRange, max: num(v) } })} />
+          <RangeInput label="总市值(亿)" min={filter.marketCapRange?.min} max={filter.marketCapRange?.max}
+            onMin={(v) => patch({ marketCapRange: { ...filter.marketCapRange, min: num(v) ? num(v)! * 1e8 : undefined } })}
+            onMax={(v) => patch({ marketCapRange: { ...filter.marketCapRange, max: num(v) ? num(v)! * 1e8 : undefined } })} />
+          <RangeInput label="跳空缺口≥(%)" min={filter.gapMin}
+            onMin={(v) => patch({ gapMin: num(v) })}
+            onMax={() => {}} single />
         </View>
 
-        {/* 技术信号 */}
+        {/* 技术指标 */}
         <View style={styles.block}>
-          <SectionTitle hint="需本地 K 线">技术信号</SectionTitle>
-          <View style={styles.switchRow}>
-            <ThemedText type="small">启用技术指标条件</ThemedText>
-            <Switch value={useSignals} onValueChange={(v) => { setUseSignals(v); if (!v) patch({ signals: undefined }); }} />
-          </View>
-          {useSignals ? (
-            <View style={styles.signalsBox}>
-              <SignalPicker
-                value={filter.signals}
-                onChange={(v: SignalCondition | undefined) => patch({ signals: v })}
-              />
-              <View style={styles.bbiSection}>
-                <ThemedText type="smallBold" style={styles.bbiTitle}>BBI（周线/日线定向）</ThemedText>
-                <BBIPicker
-                  value={filter.signals}
-                  onChange={(v: SignalCondition | undefined) => patch({ signals: v })}
-                />
-              </View>
-              <ThemedText type="small" themeColor="textSecondary" style={styles.tip}>
-                提示：信号判定只对「已下载 K 线」的股票生效。周线条件需要周线缓存。
-              </ThemedText>
+          <SectionTitle hint="AND 组合，可指定周期">技术指标</SectionTitle>
+          <RulePicker
+            rules={filter.rules ?? []}
+            onChange={(rules) => patch({ rules: rules.length > 0 ? rules : undefined })}
+          />
+          <ThemedText type="small" themeColor="textSecondary" style={styles.tip}>
+            技术指标判定依赖本地已下载的 K 线；周期上无数据的股票会被跳过并计数。
+          </ThemedText>
+        </View>
+
+        {/* 保存条件 */}
+        <View style={styles.block}>
+          <Pressable onPress={onSaveSet}>
+            <View style={[styles.saveBtn, { backgroundColor: theme.backgroundElement }]}>
+              <Text style={[styles.saveBtnText, { color: theme.tint }]}>保存为常用条件</Text>
             </View>
-          ) : (
-            <ThemedText type="small" themeColor="textSecondary" style={styles.tip}>
-              基础条件（排除 / 市值 / PE / 涨跌幅 / 换手率）不依赖 K 线，可直接筛选。
-            </ThemedText>
-          )}
+          </Pressable>
         </View>
 
         {msg ? (
@@ -191,15 +245,21 @@ export default function FilterScreen() {
             <ThemedText type="small" themeColor="textSecondary">{msg}</ThemedText>
           </View>
         ) : null}
+
+        {hasKlineConds ? (
+          <ThemedText type="small" themeColor="textSecondary" style={styles.klineNote}>
+            含技术指标条件，将对已下载 K 线的股票判定。
+          </ThemedText>
+        ) : null}
       </ScrollView>
     </SafeAreaView>
   );
 }
 
-/** 区间输入行 */
-function RangeInput({ label, min, max, onMin, onMax }: {
+/** 区间输入行（single=只有最小值） */
+function RangeInput({ label, min, max, onMin, onMax, single }: {
   label: string; min?: number; max?: number;
-  onMin: (t: string) => void; onMax: (t: string) => void;
+  onMin: (t: string) => void; onMax: (t: string) => void; single?: boolean;
 }) {
   const theme = useTheme();
   return (
@@ -208,10 +268,14 @@ function RangeInput({ label, min, max, onMin, onMax }: {
       <TextInput defaultValue={min !== undefined ? String(min) : ''} onChangeText={onMin}
         placeholder="最小" placeholderTextColor={theme.textSecondary} keyboardType="numeric"
         style={[styles.rangeInput, { backgroundColor: theme.backgroundElement, color: theme.text }]} />
-      <ThemedText type="small" themeColor="textSecondary">~</ThemedText>
-      <TextInput defaultValue={max !== undefined ? String(max) : ''} onChangeText={onMax}
-        placeholder="最大" placeholderTextColor={theme.textSecondary} keyboardType="numeric"
-        style={[styles.rangeInput, { backgroundColor: theme.backgroundElement, color: theme.text }]} />
+      {!single ? (
+        <>
+          <ThemedText type="small" themeColor="textSecondary">~</ThemedText>
+          <TextInput defaultValue={max !== undefined ? String(max) : ''} onChangeText={onMax}
+            placeholder="最大" placeholderTextColor={theme.textSecondary} keyboardType="numeric"
+            style={[styles.rangeInput, { backgroundColor: theme.backgroundElement, color: theme.text }]} />
+        </>
+      ) : null}
     </View>
   );
 }
@@ -224,14 +288,16 @@ const styles = StyleSheet.create({
   },
   scroll: { flex: 1 },
   scrollContent: { paddingBottom: 48, paddingTop: 8 },
-  block: { paddingHorizontal: 16, marginBottom: 24 },
+  block: { paddingHorizontal: 16, marginBottom: 22 },
+  chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  chip: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8 },
+  chipText: { fontSize: 13 },
   rangeRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
-  rangeLabel: { width: 76 },
+  rangeLabel: { width: 96 },
   rangeInput: { flex: 1, height: 38, borderRadius: 8, paddingHorizontal: 12, fontSize: 15 },
-  switchRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 8 },
-  signalsBox: { marginTop: 8 },
-  bbiSection: { marginTop: 14, gap: 8 },
-  bbiTitle: { fontSize: 13 },
   tip: { marginTop: 8, lineHeight: 20 },
-  msgBox: { marginHorizontal: 16, marginTop: 12, padding: 12, borderRadius: 8 },
+  saveBtn: { height: 42, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
+  saveBtnText: { fontSize: 14, fontWeight: '600' },
+  msgBox: { marginHorizontal: 16, marginBottom: 12, padding: 12, borderRadius: 8 },
+  klineNote: { paddingHorizontal: 16, lineHeight: 18 },
 });

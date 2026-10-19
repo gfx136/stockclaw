@@ -124,18 +124,20 @@ export async function fetchQuote(code: string): Promise<Partial<Stock>> {
   );
 }
 
-/** 列出所有数据源（设置页用） */
+/** 列出所有数据源（设置页用）。显示顺序按产品规格：自动 / 新浪 / 腾讯 / 东财 */
 export function listSources(): { id: SourceMode; name: string; desc: string }[] {
-  return [
-    { id: 'auto', name: '自动（故障转移）', desc: '按优先级自动切换，推荐' },
-    ...SOURCES.map((s) => ({
+  const order: DataSourceId[] = ['sina', 'tencent', 'eastmoney'];
+  const rest = order
+    .map((id) => SOURCES.find((s) => s.id === id))
+    .filter((s): s is DataSource => !!s)
+    .map((s) => ({
       id: s.id as SourceMode,
       name: s.name,
       desc: [s.supportsList && '列表', s.supportsKline && 'K线', s.supportsQuote && '实时']
         .filter(Boolean)
         .join('/'),
-    })),
-  ];
+    }));
+  return [{ id: 'auto', name: '自动（故障转移）', desc: '按优先级自动切换，推荐' }, ...rest];
 }
 
 /* ------------------------------------------------------------------ *

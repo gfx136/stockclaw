@@ -216,14 +216,14 @@ export function mapToProvider(map: KlineMap) {
 }
 
 /**
- * 多周期 provider：同时提供日线与周线。
- * daily 缺省周期；weekly 在请求周线时返回。用于周线 BBI 策略等多周期筛选。
+ * 多周期 provider：按周期提供已缓存 K 线。
+ * maps 是 period → KlineMap 的映射；缺的周期返回 undefined。
+ * 用于技术指标规则的多周期判定（60分钟/日/周/月）。
  */
 export function multiPeriodProvider(
-  daily: KlineMap,
-  weekly: KlineMap
-): (code: string, period?: 'daily' | 'weekly') => KlineBar[] | undefined {
-  return (code, period = 'daily') => (period === 'weekly' ? weekly.get(code) : daily.get(code));
+  maps: Partial<Record<KlinePeriod, KlineMap>>
+): (code: string, period?: KlinePeriod) => KlineBar[] | undefined {
+  return (code, period = 'daily') => maps[period]?.get(code);
 }
 
 /** 已缓存 K 线的股票代码集合 */

@@ -72,7 +72,7 @@ export interface KlineBar {
 export type KlinePeriod = '60min' | 'daily' | 'weekly' | 'monthly';
 
 /** 市值分层 */
-export type MarketCapTier = 'large' | 'mid' | 'small' | 'tail';
+export type MarketCapTier = 'large' | 'mid' | 'small' | 'tail' | 'hs300';
 
 /** 收藏条目 */
 export interface FavoriteItem {
@@ -213,12 +213,19 @@ export interface FilterSet {
   excludeBSE?: boolean;
   /** 排除银行（名称含「银行」） */
   excludeBank?: boolean;
+  /** 跳空缺口幅度下限 %（今日开盘 vs 昨日收盘） */
+  gapMin?: number;
   /**
-   * 技术指标信号条件。
+   * 技术指标信号条件（扁平 boolean 形式，旧版）。
    * 注意：信号判定依赖本地 K 线缓存，未缓存的股票会被跳过——
    * 所以一旦设置本项，筛选范围自动收窄为「已缓存 K 线的股票」。
    */
   signals?: SignalCondition;
+  /**
+   * 技术指标规则列表（结构化，含适用周期）——规格 2.2 B。
+   * AND 组合：所有规则都满足才算命中。
+   */
+  rules?: IndicatorRule[];
 }
 
 /** 筛选结果条目 */
@@ -227,6 +234,76 @@ export interface FilterResult {
   snapshot?: IndicatorSnapshot;
   /** 命中的信号标签（结果页展示用） */
   hits: string[];
+}
+
+/* ------------------------------------------------------------------ *
+ * 技术指标规则（结构化，含适用周期）——产品规格 2.2 B
+ * ------------------------------------------------------------------ */
+
+/**
+ * 技术指标规则类型。
+ * 命名直观对应规格的条件形态。
+ */
+export type IndicatorRuleKind =
+  // MA：价格站上/跌破 MA(value)
+  | 'ma_above'
+  | 'ma_below'
+  // BOLL：收盘在 上轨上方/中轨上方/中轨下方/下轨下方
+  | 'boll_above_upper'
+  | 'boll_above_mid'
+  | 'boll_below_mid'
+  | 'boll_below_lower'
+  // MACD：柱>0/<0、金叉、死叉
+  | 'macd_hist_pos'
+  | 'macd_hist_neg'
+  | 'macd_golden'
+  | 'macd_dead'
+  // KDJ：J 值 > value / < value
+  | 'kdj_gt'
+  | 'kdj_lt'
+  // RSI：RSI(14) > value / < value
+  | 'rsi_gt'
+  | 'rsi_lt'
+  // BBI：①收盘>BBI ②连续4日收盘>BBI ③BBI>MA26(日) ④周收盘>BBI ⑤周BBI>MA26
+  | 'bbi_close_gt'
+  | 'bbi_4close_gt'
+  | 'bbi_gt_ma26'
+  | 'bbi_w_close_gt'
+  | 'bbi_w_gt_ma26';
+
+/** 一条技术指标规则 */
+export interface IndicatorRule {
+  kind: IndicatorRuleKind;
+  /** 参数：MA 周期 / KDJ·RSI 阈值；不需要参数的省略 */
+  value?: number;
+  /** 适用周期（缺省 = ['daily']）。该周期无本地数据时跳过该周期判定 */
+  periods?: KlinePeriod[];
+}
+
+/** 规则的中文描述（结果页命中标签 / 面板展示用） */
+export function ruleLabel(r: IndicatorRule): string {
+  const v = r.value;
+  switch (r.kind) {
+    case 'ma_above': return `站上MA${v ?? 20}`;
+    case 'ma_below': return `跌破MA${v ?? 20}`;
+    case 'boll_above_upper': return 'BOLL上轨上方';
+    case 'boll_above_mid': return 'BOLL中轨上方';
+    case 'boll_below_mid': return 'BOLL中轨下方';
+    case 'boll_below_lower': return 'BOLL下轨下方';
+    case 'macd_hist_pos': return 'MACD柱>0';
+    case 'macd_hist_neg': return 'MACD柱<0';
+    case 'macd_golden': return 'MACD金叉';
+    case 'macd_dead': return 'MACD死叉';
+    case 'kdj_gt': return `KDJ-J>${v ?? 80}`;
+    case 'kdj_lt': return `KDJ-J<${v ?? 20}`;
+    case 'rsi_gt': return `RSI14>${v ?? 70}`;
+    case 'rsi_lt': return `RSI14<${v ?? 30}`;
+    case 'bbi_close_gt': return '收盘>BBI';
+    case 'bbi_4close_gt': return '连续4日收盘>BBI';
+    case 'bbi_gt_ma26': return 'BBI>MA26';
+    case 'bbi_w_close_gt': return '周收盘>BBI';
+    case 'bbi_w_gt_ma26': return '周BBI>MA26';
+  }
 }
 
 /** 市值分层阈值（元）——已废弃，分档改为排名制（见 rankToTier） */
@@ -242,6 +319,7 @@ export const CAP_TIER_THRESHOLDS: Record<string, RangeCondition> = {
  *   中盘 = 101-300
  *   小盘 = 301-500
  *   长尾 = >500
+ *   沪深300 = 市值排名 Top 300（成分股近似，按市值排名代替官方成分名单）
  * rank 从 1 开始（市值降序第 1 名）。
  */
 export function rankToTier(rank: number): MarketCapTier {
@@ -251,10 +329,16 @@ export function rankToTier(rank: number): MarketCapTier {
   return 'tail';
 }
 
+/** 是否沪深300（市值前300近似） */
+export function isHS300(rank: number): boolean {
+  return rank <= 300;
+}
+
 /** 市值分层中文名（与界面规格一致） */
 export const CAP_TIER_LABELS: Record<MarketCapTier, string> = {
   large: '大盘(Top100)',
   mid: '中盘(101-300)',
   small: '小盘(301-500)',
   tail: '长尾(>500)',
+  hs300: '沪深300',
 };

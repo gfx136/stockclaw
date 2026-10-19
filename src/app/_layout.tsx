@@ -22,15 +22,19 @@ export default function RootLayout() {
               name="stock/[code]"
               options={{ title: '个股详情', headerBackTitle: '返回' }}
             />
-            <Stack.Screen
-              name="filter/index"
-              options={{
-                title: '筛选条件',
-                presentation: 'modal',
-                headerBackTitle: '关闭',
-              }}
-            />
-          </Stack>
+          <Stack.Screen
+            name="filter/index"
+            options={{
+              title: '筛选条件',
+              presentation: 'modal',
+              headerBackTitle: '关闭',
+            }}
+          />
+          <Stack.Screen
+            name="license"
+            options={{ title: '会员授权', headerBackTitle: '返回' }}
+          />
+        </Stack>
         </ThemeProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>

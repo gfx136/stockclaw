@@ -73,6 +73,8 @@ export function CapTierPicker({
         { value: 'large', label: CAP_TIER_LABELS.large },
         { value: 'mid', label: CAP_TIER_LABELS.mid },
         { value: 'small', label: CAP_TIER_LABELS.small },
+        { value: 'tail', label: CAP_TIER_LABELS.tail },
+        { value: 'hs300', label: CAP_TIER_LABELS.hs300 },
       ]}
     />
   );

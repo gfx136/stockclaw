@@ -1,42 +1,45 @@
 import { useRouter } from 'expo-router';
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   FlatList,
   Pressable,
   RefreshControl,
   StyleSheet,
+  Text,
   TextInput,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { QuoteRow } from '@/components/quote-row';
+import { StockTile } from '@/components/stock-tile';
 import { ExclusionPicker } from '@/components/filter-controls';
 import { ThemedText } from '@/components/themed-text';
 import { useTheme } from '@/hooks/use-theme';
+import { useOnline } from '@/hooks/use-online';
 import { fetchAllStocks } from '@/lib/api/failover';
-import { toggleFavorite } from '@/lib/favorites';
+import { loadFavorites, toggleFavorite } from '@/lib/favorites';
 import { getFilterState, setFilter, subscribeFilter } from '@/lib/filter-store';
-import { upDownColor } from '@/lib/format';
+import { buildPinyinMap } from '@/lib/pinyin-search';
 import type { Stock } from '@/types/stock';
 
 /**
- * 所有股票页（行情主页）。对应 StockClaw 的主页。
- * - 拉东财全量 A 股列表（分页）
- * - 支持关键字搜索、多维度排序
- * - 点行进详情，长按加/取消收藏
+ * 全部股票页（产品规格 2.1）。
+ * - 搜索：代码精确 / 名称全字 / 拼音首字母
+ * - 排序栏：代码/名称/最新价/涨跌幅/换手率/总市值，默认代码升序，点击切换方向
+ * - 行：StockTile（含星标切换自选）
+ * - 头部：刷新 / 筛选（打开选股条件面板）
  */
 
-type SortKey = 'changePercent' | 'turnover' | 'amount' | 'marketCap' | 'price' | 'pe';
+type SortKey = 'code' | 'name' | 'price' | 'changePercent' | 'turnover' | 'marketCap';
 
 const SORTS: { key: SortKey; label: string }[] = [
+  { key: 'code', label: '代码' },
+  { key: 'name', label: '名称' },
+  { key: 'price', label: '最新价' },
   { key: 'changePercent', label: '涨跌幅' },
   { key: 'turnover', label: '换手率' },
-  { key: 'amount', label: '成交额' },
-  { key: 'marketCap', label: '市值' },
-  { key: 'price', label: '价格' },
+  { key: 'marketCap', label: '总市值' },
 ];
 
 export default function AllStocksScreen() {
@@ -48,20 +51,15 @@ export default function AllStocksScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
-  const [sortKey, setSortKey] = useState<SortKey>('changePercent');
-  const [desc, setDesc] = useState(true);
-  const mounted = useRef(true);
+  const [sortKey, setSortKey] = useState<SortKey>('code');
+  const [desc, setDesc] = useState(false); // 默认代码升序
+  const [favSet, setFavSet] = useState<Set<string>>(new Set());
+  const [lastLoadedAt, setLastLoadedAt] = useState<number | null>(null);
+  const online = useOnline();
 
-  // 快捷排除条件（与筛选器共享 filter-store）
+  // 快捷排除（与筛选器共享 filter-store）
   const filterState = useSyncExternalStore(subscribeFilter, getFilterState, getFilterState);
   const filter = filterState.filter;
-
-  useEffect(() => {
-    mounted.current = true;
-    return () => {
-      mounted.current = false;
-    };
-  }, []);
 
   const load = useCallback(async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true);
@@ -69,80 +67,98 @@ export default function AllStocksScreen() {
     setError(null);
     try {
       const list = await fetchAllStocks(200);
-      if (!mounted.current) return;
       setStocks(list);
+      setLastLoadedAt(Date.now());
       if (list.length === 0) setError('未取到行情数据，请检查网络或稍后重试。');
     } catch (err) {
-      if (!mounted.current) return;
       setError(err instanceof Error ? err.message : String(err));
     } finally {
-      if (mounted.current) {
-        setLoading(false);
-        setRefreshing(false);
-      }
+      setLoading(false);
+      setRefreshing(false);
     }
   }, []);
 
   useEffect(() => {
     load();
+    (async () => {
+      const favs = await loadFavorites();
+      setFavSet(new Set(favs.map((f) => f.code)));
+    })();
   }, [load]);
 
-  /** 搜索 + 快捷排除 + 排序 */
+  // 拼音首字母映射（一次性预算，搜索时直接查表）
+  const pyMap = useMemo(() => buildPinyinMap(stocks), [stocks]);
+
+  const handleToggleFav = useCallback(async (s: Stock) => {
+    const nowFav = await toggleFavorite(s.code, s.name);
+    setFavSet((prev) => {
+      const next = new Set(prev);
+      if (nowFav) next.add(s.code);
+      else next.delete(s.code);
+      return next;
+    });
+  }, []);
+
+  /** 快捷排除过滤 */
+  const applyExclusions = useCallback(
+    (list: Stock[]): Stock[] =>
+      list.filter((s) => {
+        const code = s.code.replace(/\D/g, '');
+        if (filter.excludeST && s.name.includes('ST')) return false;
+        if (filter.excludeBank && s.name.includes('银行')) return false;
+        if (filter.excludeKCB && (code.startsWith('688') || code.startsWith('689'))) return false;
+        if (filter.excludeChiNext && code.startsWith('30')) return false;
+        if (
+          filter.excludeBSE &&
+          (code.startsWith('43') || code.startsWith('82') || code.startsWith('83') ||
+            code.startsWith('87') || code.startsWith('8'))
+        ) {
+          return false;
+        }
+        return true;
+      }),
+    [filter]
+  );
+
+  /** 搜索 + 排除 + 排序 */
   const view = useMemo(() => {
     const q = query.trim().toLowerCase();
-    let list = stocks;
-    // 快捷排除（与筛选器共享 filter-store）
-    list = list.filter((s) => {
-      const code = s.code.replace(/\D/g, '');
-      if (filter.excludeST && s.name.includes('ST')) return false;
-      if (filter.excludeBank && s.name.includes('银行')) return false;
-      if (filter.excludeKCB && (code.startsWith('688') || code.startsWith('689'))) return false;
-      if (filter.excludeChiNext && code.startsWith('30')) return false;
-      if (
-        filter.excludeBSE &&
-        (code.startsWith('43') || code.startsWith('82') || code.startsWith('83') ||
-          code.startsWith('87') || code.startsWith('8'))
-      ) {
-        return false;
-      }
-      return true;
-    });
+    let list = applyExclusions(stocks);
     if (q) {
-      list = list.filter(
-        (s) => s.name.toLowerCase().includes(q) || s.code.toLowerCase().includes(q)
-      );
+      list = list.filter((s) => {
+        if (s.code.toLowerCase().includes(q)) return true;
+        if (s.name.toLowerCase().includes(q)) return true;
+        return (pyMap.get(s.code) ?? '').includes(q);
+      });
     }
     const dir = desc ? -1 : 1;
     return [...list].sort((a, b) => {
+      if (sortKey === 'code') return a.code.localeCompare(b.code) * dir;
+      if (sortKey === 'name') {
+        const pa = pyMap.get(a.code) ?? a.name;
+        const pb = pyMap.get(b.code) ?? b.name;
+        return pa.localeCompare(pb) * dir;
+      }
       const av = (a[sortKey] ?? Number.NEGATIVE_INFINITY) as number;
       const bv = (b[sortKey] ?? Number.NEGATIVE_INFINITY) as number;
       return (av - bv) * dir;
     });
-  }, [stocks, query, sortKey, desc, filter]);
-
-  const upCount = useMemo(() => stocks.filter((s) => s.changePercent > 0).length, [stocks]);
-  const downCount = useMemo(() => stocks.filter((s) => s.changePercent < 0).length, [stocks]);
+  }, [stocks, query, sortKey, desc, applyExclusions, pyMap]);
 
   const handleSort = useCallback(
     (key: SortKey) => {
       if (key === sortKey) setDesc((d) => !d);
       else {
         setSortKey(key);
-        setDesc(true);
+        // 代码/名称默认升序，数值默认降序
+        setDesc(key === 'code' || key === 'name' ? false : true);
       }
     },
     [sortKey]
   );
 
-  const handleLongPress = useCallback(async (stock: Stock) => {
-    const nowFav = await toggleFavorite(stock.code, stock.name);
-    Alert.alert(nowFav ? '已收藏' : '已取消收藏', `${stock.name} (${stock.code})`);
-  }, []);
-
   const openDetail = useCallback(
-    (s: Stock) => {
-      router.push(`/stock/${s.code}?name=${encodeURIComponent(s.name)}`);
-    },
+    (s: Stock) => router.push(`/stock/${s.code}?name=${encodeURIComponent(s.name)}`),
     [router]
   );
 
@@ -159,17 +175,15 @@ export default function AllStocksScreen() {
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]} edges={['top']}>
-      {/* 头部：标题 + 操作按钮 */}
+      {/* 头部：标题 + 操作 */}
       <View style={styles.header}>
-        <ThemedText type="subtitle" style={styles.headerTitle}>
-          全部股票
-        </ThemedText>
+        <ThemedText type="subtitle" style={styles.headerTitle}>全部股票</ThemedText>
         <View style={styles.headerActions}>
           <Pressable onPress={() => load(true)} hitSlop={8} style={styles.headerBtn}>
             <ThemedText type="small">⟳</ThemedText>
           </Pressable>
           <Pressable onPress={() => router.push('/filter')} hitSlop={8} style={styles.headerBtn}>
-            <ThemedText type="small">筛选</ThemedText>
+            <ThemedText type="small" style={{ color: theme.tint }}>筛选</ThemedText>
           </Pressable>
         </View>
       </View>
@@ -178,7 +192,7 @@ export default function AllStocksScreen() {
       <View style={styles.searchWrap}>
         <TextInput
           style={[styles.search, { backgroundColor: theme.backgroundElement, color: theme.text }]}
-          placeholder="搜索名称/代码，如 浦发银行 600000"
+          placeholder="搜索代码 / 名称 / 拼音"
           placeholderTextColor={theme.textSecondary}
           value={query}
           onChangeText={setQuery}
@@ -188,7 +202,16 @@ export default function AllStocksScreen() {
         />
       </View>
 
-      {/* 快捷排除 chips */}
+      {/* 离线横幅 */}
+      {!online ? (
+        <View style={[styles.offlineBanner, { backgroundColor: theme.backgroundElement }]}>
+          <Text style={[styles.offlineText, { color: theme.textSecondary }]}>
+            离线 · 数据截至 {lastLoadedAt ? new Date(lastLoadedAt).toISOString().slice(0, 10) : '—'}
+          </Text>
+        </View>
+      ) : null}
+
+      {/* 快捷排除 */}
       <View style={styles.excludeWrap}>
         <ExclusionPicker
           value={{
@@ -211,42 +234,26 @@ export default function AllStocksScreen() {
         />
       </View>
 
-      {/* 涨跌统计 */}
-      {stocks.length > 0 ? (
-        <View style={styles.statsRow}>
-          <ThemedText type="small" style={{ color: upDownColor(1) }}>
-            涨 {upCount}
-          </ThemedText>
-          <ThemedText type="small" style={{ color: upDownColor(-1) }}>
-            跌 {downCount}
-          </ThemedText>
-          <ThemedText type="small" themeColor="textSecondary">
-            平 {stocks.length - upCount - downCount}
-          </ThemedText>
-          <ThemedText type="code" themeColor="textSecondary" style={styles.countRight}>
-            {view.length} / {stocks.length} 只 · 长按加收藏
-          </ThemedText>
-        </View>
-      ) : null}
-
-      {/* 排序条 */}
+      {/* 排序栏 */}
       <View style={styles.sortBar}>
-        {SORTS.map((s) => {
-          const active = s.key === sortKey;
-          return (
-            <Pressable key={s.key} onPress={() => handleSort(s.key)} hitSlop={4}>
-              <View
-                style={[styles.sortChip, active && { backgroundColor: theme.backgroundSelected }]}>
-                <ThemedText
-                  type={active ? 'smallBold' : 'small'}
-                  themeColor={active ? 'text' : 'textSecondary'}>
+        <ThemedText type="small" themeColor="textSecondary">共 {view.length} 只</ThemedText>
+        <View style={styles.sortChips}>
+          {SORTS.map((s) => {
+            const active = s.key === sortKey;
+            return (
+              <Pressable key={s.key} onPress={() => handleSort(s.key)} hitSlop={4}>
+                <Text
+                  style={[
+                    styles.sortChip,
+                    { color: active ? theme.tint : theme.textSecondary, fontWeight: active ? '700' : '400' },
+                  ]}>
                   {s.label}
-                  {active ? (desc ? ' ↓' : ' ↑') : ''}
-                </ThemedText>
-              </View>
-            </Pressable>
-          );
-        })}
+                  {active ? (desc ? '↓' : '↑') : ''}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
       </View>
 
       {error && stocks.length === 0 ? (
@@ -270,14 +277,19 @@ export default function AllStocksScreen() {
           windowSize={11}
           removeClippedSubviews
           renderItem={({ item }) => (
-            <QuoteRow stock={item} onPress={openDetail} onLongPress={handleLongPress} />
+            <StockTile
+              stock={item}
+              isFav={favSet.has(item.code)}
+              onPress={openDetail}
+              onToggleFav={handleToggleFav}
+            />
           )}
           ItemSeparatorComponent={() => (
             <View style={[styles.sep, { backgroundColor: theme.border }]} />
           )}
           ListEmptyComponent={
             <ThemedText type="small" themeColor="textSecondary" style={styles.empty}>
-              {query ? '无匹配结果' : '暂无数据'}
+              暂无数据
             </ThemedText>
           }
         />
@@ -291,35 +303,23 @@ const styles = StyleSheet.create({
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12 },
   loadingText: { marginTop: 8 },
   header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingTop: 6,
-    paddingBottom: 4,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: 16, paddingTop: 6, paddingBottom: 4,
   },
   headerTitle: { fontSize: 22 },
-  headerActions: { flexDirection: 'row', gap: 12 },
+  headerActions: { flexDirection: 'row', gap: 16 },
   headerBtn: { padding: 4 },
   excludeWrap: { paddingHorizontal: 16, paddingBottom: 4 },
-  searchWrap: { paddingHorizontal: 16, paddingTop: 8, paddingBottom: 4 },
+  searchWrap: { paddingHorizontal: 16, paddingTop: 8, paddingBottom: 6 },
   search: { height: 40, borderRadius: 10, paddingHorizontal: 14, fontSize: 15 },
-  statsRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 14,
-    paddingHorizontal: 16,
-    paddingVertical: 6,
-  },
-  countRight: { marginLeft: 'auto', fontSize: 11 },
+  offlineBanner: { marginHorizontal: 16, marginBottom: 6, borderRadius: 8, paddingVertical: 6, alignItems: 'center' },
+  offlineText: { fontSize: 12 },
   sortBar: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-    paddingHorizontal: 16,
-    paddingBottom: 6,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: 16, paddingVertical: 6,
   },
-  sortChip: { paddingHorizontal: 12, paddingVertical: 4, borderRadius: 12 },
+  sortChips: { flexDirection: 'row', gap: 10, flexWrap: 'wrap' },
+  sortChip: { fontSize: 12 },
   sep: { height: StyleSheet.hairlineWidth, marginLeft: 16 },
   empty: { textAlign: 'center', marginTop: 40 },
   errText: { textAlign: 'center', paddingHorizontal: 32 },

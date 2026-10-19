@@ -4,6 +4,7 @@ import {
   ActivityIndicator,
   Pressable,
   ScrollView,
+  Share,
   StyleSheet,
   Text,
   useWindowDimensions,
@@ -56,6 +57,11 @@ export default function StockDetailScreen() {
   const [downloading, setDownloading] = useState(false);
   const [fav, setFav] = useState(false);
   const [tip, setTip] = useState<string | null>(null);
+  // 叠加指标（指标管理）
+  const [maOverlay, setMaOverlay] = useState<number[]>([5, 10, 20]);
+  const [showBoll, setShowBoll] = useState(false);
+  const [showBbi, setShowBbi] = useState(false);
+  const [showIndMgr, setShowIndMgr] = useState(false);
 
   const stockName = name ? decodeURIComponent(name) : (code ?? '');
 
@@ -135,6 +141,16 @@ export default function StockDetailScreen() {
     setFav(await toggleFavorite(code, stockName));
   }, [code, stockName]);
 
+  /** 系统分享（纯文本卡片） */
+  const onShare = useCallback(async () => {
+    const text = `${stockName}(${code}) 最新价 ${fmtPrice(quote?.price)} 涨跌幅 ${fmtPercent(quote?.changePercent)} —— StockClaw`;
+    try {
+      await Share.share({ message: text });
+    } catch {
+      /* 用户取消不处理 */
+    }
+  }, [stockName, code, quote]);
+
   const snapshot = useMemo(
     () => (series && bars.length > 0 ? snapshotAt(series, bars) : null),
     [series, bars]
@@ -149,11 +165,16 @@ export default function StockDetailScreen() {
         options={{
           title: stockName || '个股详情',
           headerRight: () => (
-            <Pressable onPress={handleToggleFav} hitSlop={10}>
-              <Text style={{ fontSize: 20, color: fav ? theme.tint : theme.text }}>
-                {fav ? '★' : '☆'}
-              </Text>
-            </Pressable>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 16 }}>
+              <Pressable onPress={onShare} hitSlop={10}>
+                <Text style={{ fontSize: 18, color: theme.text }}>⤴</Text>
+              </Pressable>
+              <Pressable onPress={handleToggleFav} hitSlop={10}>
+                <Text style={{ fontSize: 20, color: fav ? theme.tint : theme.text }}>
+                  {fav ? '★' : '☆'}
+                </Text>
+              </Pressable>
+            </View>
           ),
         }}
       />
@@ -202,6 +223,46 @@ export default function StockDetailScreen() {
         </View>
       ) : null}
 
+      {/* 指标管理入口（K线右上） */}
+      <View style={styles.indMgrRow}>
+        <Pressable onPress={() => setShowIndMgr((v) => !v)} hitSlop={6}>
+          <Text style={[styles.indMgrBtn, { color: theme.tint }]}>
+            指标 {showIndMgr ? '▲' : '▼'}
+          </Text>
+        </Pressable>
+      </View>
+      {showIndMgr ? (
+        <View style={[styles.indMgrPanel, { backgroundColor: theme.backgroundElement }]}>
+          <Text style={[styles.indMgrLabel, { color: theme.textSecondary }]}>均线</Text>
+          <View style={styles.indChips}>
+            {[5, 10, 20, 60].map((p) => {
+              const on = maOverlay.includes(p);
+              return (
+                <Pressable
+                  key={p}
+                  onPress={() =>
+                    setMaOverlay((prev) => (on ? prev.filter((x) => x !== p) : [...prev, p].sort((a, b) => a - b)))
+                  }>
+                  <View style={[styles.indChip, { backgroundColor: on ? theme.tint : theme.background }]}>
+                    <Text style={[styles.indChipText, { color: on ? '#fff' : theme.text }]}>MA{p}</Text>
+                  </View>
+                </Pressable>
+              );
+            })}
+            <Pressable onPress={() => setShowBoll((v) => !v)}>
+              <View style={[styles.indChip, { backgroundColor: showBoll ? theme.tint : theme.background }]}>
+                <Text style={[styles.indChipText, { color: showBoll ? '#fff' : theme.text }]}>BOLL</Text>
+              </View>
+            </Pressable>
+            <Pressable onPress={() => setShowBbi((v) => !v)}>
+              <View style={[styles.indChip, { backgroundColor: showBbi ? theme.tint : theme.background }]}>
+                <Text style={[styles.indChipText, { color: showBbi ? '#fff' : theme.text }]}>BBI</Text>
+              </View>
+            </Pressable>
+          </View>
+        </View>
+      ) : null}
+
       {/* K线大屏：占屏幕约一半 */}
       <View style={[styles.chartCard, { backgroundColor: theme.backgroundElement }]}>
         {loading && bars.length === 0 ? (
@@ -225,7 +286,9 @@ export default function StockDetailScreen() {
             width={chartW}
             height={chartH}
             series={series ?? undefined}
-            maOverlay={[5, 10, 20]}
+            maOverlay={maOverlay}
+            showBoll={showBoll}
+            showBbi={showBbi}
             defaultVisible={100}
             gridColor={theme.border}
             axisColor={theme.textSecondary}
@@ -320,6 +383,13 @@ const styles = StyleSheet.create({
   dlBtn: { paddingHorizontal: 14, paddingVertical: 7, borderRadius: 8 },
   dlText: { fontSize: 13, fontWeight: '600' },
   tipBox: { marginHorizontal: 16, marginBottom: 6, padding: 10, borderRadius: 8 },
+  indMgrRow: { flexDirection: 'row', justifyContent: 'flex-end', paddingHorizontal: 16, paddingBottom: 2 },
+  indMgrBtn: { fontSize: 12, fontWeight: '600' },
+  indMgrPanel: { marginHorizontal: 16, marginBottom: 6, borderRadius: 10, padding: 10, gap: 6 },
+  indMgrLabel: { fontSize: 11 },
+  indChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  indChip: { paddingHorizontal: 12, paddingVertical: 5, borderRadius: 8 },
+  indChipText: { fontSize: 12, fontWeight: '600' },
   chartCard: { marginHorizontal: 16, borderRadius: 14, padding: 8, justifyContent: 'center' },
   chartLoading: { alignItems: 'center', justifyContent: 'center', gap: 6 },
   noData: { textAlign: 'center' },

@@ -13,14 +13,19 @@
  * 4. **指标只算一次**，金叉/死叉所需的「前一项」直接从序列里取，不重复计算。
  */
 
-import { calcAllIndicators, snapshotAt, nthLast } from '@/lib/indicators';
+import { calcAllIndicators, snapshotAt, nthLast, sma } from '@/lib/indicators';
 import { matchBBIGroup, matchWeeklyBBI } from '@/lib/weekly-bbi';
 import {
+  isHS300,
   rankToTier,
+  ruleLabel,
   type FilterSet,
   type FilterResult,
+  type IndicatorRule,
   type IndicatorSeries,
+  type IndicatorSnapshot,
   type KlineBar,
+  type KlinePeriod,
   type RangeCondition,
   type SignalCondition,
   type Stock,
@@ -28,9 +33,9 @@ import {
 
 /**
  * K 线提供者：同步返回已缓存的 K 线（无则返回 undefined / 空数组）。
- * period 缺省为日线；weeklyBBIStrategy 信号会请求周线。
+ * period 缺省为日线；技术指标规则可按需请求 60分钟/周/月。
  */
-export type KlineProvider = (code: string, period?: 'daily' | 'weekly') => KlineBar[] | undefined;
+export type KlineProvider = (code: string, period?: KlinePeriod) => KlineBar[] | undefined;
 
 /** 判断数值是否落在区间内；区间字段缺省视为不限制 */
 function inRange(value: number | undefined, range?: RangeCondition): boolean {
@@ -106,10 +111,12 @@ export function matchBase(
   }
 
   if (filter.capTiers && filter.capTiers.length > 0) {
-    // 排名制分档：大盘 Top100 / 中盘 101-300 / 小盘 301-500 / 长尾 >500
+    // 排名制分档：大盘 Top100 / 中盘 101-300 / 小盘 301-500 / 长尾 >500 / 沪深300(Top300)
     const rank = rankMap?.get(stock.code);
     if (rank === undefined) return false;
-    if (!filter.capTiers.includes(rankToTier(rank))) return false;
+    const tierHit = filter.capTiers.includes(rankToTier(rank));
+    const hs300Hit = filter.capTiers.includes('hs300') && isHS300(rank);
+    if (!tierHit && !hs300Hit) return false;
   }
   if (!inRange(stock.marketCap, filter.marketCapRange)) return false;
   if (!inRange(stock.pe, filter.peRange)) return false;
@@ -214,6 +221,255 @@ export function matchSignals(
   return hits;
 }
 
+/* ------------------------------------------------------------------ *
+ * 技术指标规则判定（结构化，含适用周期）——规格 2.2 B / 4.3
+ * ------------------------------------------------------------------ */
+
+/** 是否有技术指标规则 */
+export function hasAnyRules(filter: FilterSet): boolean {
+  return !!(filter.rules && filter.rules.length > 0);
+}
+
+/** 收集一组规则需要的 MA 周期（含 BBI 规则的 MA26） */
+function collectMaPeriods(rules: IndicatorRule[]): number[] {
+  const set = new Set<number>([5, 10, 20, 60]);
+  for (const r of rules) {
+    if (r.kind === 'ma_above' || r.kind === 'ma_below') set.add(r.value ?? 20);
+    if (r.kind === 'bbi_gt_ma26' || r.kind === 'bbi_w_gt_ma26') set.add(26);
+  }
+  return [...set];
+}
+
+/** 判定单条规则（最新 bar）。series 已含所需指标。 */
+function judgeRule(rule: IndicatorRule, series: IndicatorSeries, bars: KlineBar[]): boolean {
+  const n = bars.length;
+  const i = n - 1;
+  if (i < 0) return false;
+  const close = bars[i].close;
+  const at = (arr?: (number | undefined)[]) => (arr ? arr[i] : undefined);
+
+  switch (rule.kind) {
+    case 'ma_above': {
+      const v = at(series.ma[rule.value ?? 20]);
+      return v !== undefined && close > v;
+    }
+    case 'ma_below': {
+      const v = at(series.ma[rule.value ?? 20]);
+      return v !== undefined && close < v;
+    }
+    case 'boll_above_upper': { const v = at(series.boll.upper); return v !== undefined && close > v; }
+    case 'boll_above_mid': { const v = at(series.boll.mid); return v !== undefined && close > v; }
+    case 'boll_below_mid': { const v = at(series.boll.mid); return v !== undefined && close < v; }
+    case 'boll_below_lower': { const v = at(series.boll.lower); return v !== undefined && close < v; }
+    case 'macd_hist_pos': { const v = at(series.macd.hist); return v !== undefined && v > 0; }
+    case 'macd_hist_neg': { const v = at(series.macd.hist); return v !== undefined && v < 0; }
+    case 'macd_golden': {
+      const d0 = at(series.macd.dif), e0 = at(series.macd.dea);
+      const d1 = i > 0 ? series.macd.dif[i - 1] : undefined;
+      const e1 = i > 0 ? series.macd.dea[i - 1] : undefined;
+      return d0 !== undefined && e0 !== undefined && d1 !== undefined && e1 !== undefined && d1 <= e1 && d0 > e0;
+    }
+    case 'macd_dead': {
+      const d0 = at(series.macd.dif), e0 = at(series.macd.dea);
+      const d1 = i > 0 ? series.macd.dif[i - 1] : undefined;
+      const e1 = i > 0 ? series.macd.dea[i - 1] : undefined;
+      return d0 !== undefined && e0 !== undefined && d1 !== undefined && e1 !== undefined && d1 >= e1 && d0 < e0;
+    }
+    case 'kdj_gt': { const v = at(series.kdj.j); return v !== undefined && v > (rule.value ?? 80); }
+    case 'kdj_lt': { const v = at(series.kdj.j); return v !== undefined && v < (rule.value ?? 20); }
+    case 'rsi_gt': { const v = at(series.rsi[14]); return v !== undefined && v > (rule.value ?? 70); }
+    case 'rsi_lt': { const v = at(series.rsi[14]); return v !== undefined && v < (rule.value ?? 30); }
+    case 'bbi_close_gt':
+    case 'bbi_w_close_gt': {
+      const b = at(series.bbi);
+      return b !== undefined && close > b;
+    }
+    case 'bbi_4close_gt': {
+      for (let k = 0; k < 4; k++) {
+        const idx = i - k;
+        if (idx < 0) return false;
+        const b = series.bbi[idx];
+        if (b === undefined || bars[idx].close <= b) return false;
+      }
+      return true;
+    }
+    case 'bbi_gt_ma26':
+    case 'bbi_w_gt_ma26': {
+      const b = at(series.bbi);
+      const m = at(series.ma[26]);
+      return b !== undefined && m !== undefined && b > m;
+    }
+  }
+}
+
+/**
+ * 判定一只股票是否命中所有规则（AND）。
+ * 每条规则在其选中的每个周期判定：该周期无本地数据则跳过该周期；
+ * 一条规则所有选中周期都无数据 → 该规则视为不命中（数据不足）。
+ * 返回命中标签。
+ */
+export function matchRules(
+  stock: Stock,
+  rules: IndicatorRule[],
+  klineProvider: KlineProvider
+): { pass: boolean; hits: string[]; noData: boolean } {
+  const hits: string[] = [];
+  let anyNoData = false;
+
+  for (const rule of rules) {
+    const periods = rule.periods && rule.periods.length > 0 ? rule.periods : (['daily'] as KlinePeriod[]);
+    let ruleJudged = false;
+    let rulePass = true;
+
+    for (const period of periods) {
+      let bars: KlineBar[] | undefined;
+      try {
+        bars = klineProvider(stock.code, period);
+      } catch {
+        bars = undefined;
+      }
+      if (!bars || bars.length < 35) continue; // 该周期数据不足，跳过该周期
+      ruleJudged = true;
+      const series = calcAllIndicators(bars, collectMaPeriods([rule]));
+      if (!judgeRule(rule, series, bars)) {
+        rulePass = false;
+        break;
+      }
+    }
+
+    if (!ruleJudged) {
+      anyNoData = true; // 这条规则没有任何周期的数据可判
+      rulePass = false;
+    }
+    if (!rulePass) return { pass: false, hits: [], noData: anyNoData };
+    hits.push(ruleLabel(rule));
+  }
+
+  return { pass: true, hits, noData: anyNoData };
+}
+
+/** 跳空缺口幅度判定：最新 bar 开盘 vs 前一 bar 收盘，% */
+export function gapPercent(bars: KlineBar[]): number | undefined {
+  const n = bars.length;
+  if (n < 2) return undefined;
+  const prevClose = bars[n - 2].close;
+  if (!prevClose) return undefined;
+  return ((bars[n - 1].open - prevClose) / prevClose) * 100;
+}
+
+/** 信号判定结果 */
+interface SignalMatch {
+  hit: boolean;
+  hits: string[];
+  snapshot?: IndicatorSnapshot;
+  /** 数据不足（本地 K 线缺失） */
+  noData: boolean;
+}
+
+/**
+ * 判定一只股票的旧版扁平 signals（BBI 分组 + 日线信号）。
+ * BBI 组内 AND；BBI 与其他日线信号合并取命中集合。
+ */
+function matchStockSignals(
+  stock: Stock,
+  sig: SignalCondition,
+  klineProvider: KlineProvider
+): SignalMatch {
+  const hits: string[] = [];
+
+  // —— 周线 BBI 组 ——
+  if (hasWeeklyBBI(sig)) {
+    let weeklyBars: KlineBar[] | undefined;
+    try {
+      weeklyBars = klineProvider(stock.code, 'weekly');
+    } catch {
+      weeklyBars = undefined;
+    }
+    if (!weeklyBars || weeklyBars.length < 26) {
+      return { hit: false, hits: [], noData: true };
+    }
+    if (sig.weeklyBBIStrategy) {
+      const r = matchWeeklyBBI(weeklyBars);
+      if (!r.pass) return { hit: false, hits: [], noData: false };
+      hits.push(`周线BBI多头 (BBI ${r.weeklyBBI?.toFixed(2)}>MA26 ${r.weeklyMA26?.toFixed(2)})`);
+    }
+    const wHits = matchBBIGroup(weeklyBars, {
+      closeGtBBI: sig.weeklyCloseGtBBI,
+      bull: sig.weeklyBull,
+      bbiGtMA26: sig.weeklyBBIGtMA26,
+    });
+    const wExpected = [sig.weeklyCloseGtBBI, sig.weeklyBull, sig.weeklyBBIGtMA26].filter(Boolean).length;
+    if (wExpected > 0) {
+      if (wHits.length < wExpected) return { hit: false, hits: [], noData: false };
+      hits.push(...wHits.map((h) => `周线:${h}`));
+    }
+  }
+
+  // —— 日线 BBI 组 ——
+  if (hasDailyBBI(sig)) {
+    let dailyBars: KlineBar[] | undefined;
+    try {
+      dailyBars = klineProvider(stock.code, 'daily');
+    } catch {
+      dailyBars = undefined;
+    }
+    if (!dailyBars || dailyBars.length < 26) {
+      return { hit: false, hits: [], noData: true };
+    }
+    const dHits = matchBBIGroup(dailyBars, {
+      closeGtBBI: sig.dailyCloseGtBBI,
+      bbiGtMA26: sig.dailyBBIGtMA26,
+      fourCloseGtBBI: sig.daily4CloseGtBBI,
+    });
+    const dExpected = [sig.dailyCloseGtBBI, sig.dailyBBIGtMA26, sig.daily4CloseGtBBI].filter(Boolean).length;
+    if (dExpected > 0) {
+      if (dHits.length < dExpected) return { hit: false, hits: [], noData: false };
+      hits.push(...dHits.map((h) => `日线:${h}`));
+    }
+  }
+
+  // 是否还有 BBI 以外的其他日线信号
+  const onlyBBI = hasWeeklyBBI(sig) || hasDailyBBI(sig);
+  const hasOtherDailySignal = hasAnySignal({
+    ...sig,
+    weeklyBBIStrategy: undefined,
+    weeklyCloseGtBBI: undefined,
+    weeklyBull: undefined,
+    weeklyBBIGtMA26: undefined,
+    dailyCloseGtBBI: undefined,
+    daily4CloseGtBBI: undefined,
+    dailyBBIGtMA26: undefined,
+  });
+
+  if (onlyBBI && !hasOtherDailySignal) {
+    return { hit: hits.length > 0, hits, noData: false };
+  }
+
+  let bars: KlineBar[] | undefined;
+  try {
+    bars = klineProvider(stock.code);
+  } catch {
+    bars = undefined;
+  }
+  if (!bars || bars.length < MIN_BARS_FOR_SIGNAL) {
+    return { hit: false, hits: [], noData: true };
+  }
+
+  try {
+    const series = calcAllIndicators(bars);
+    const otherHits = matchSignals(sig, series, bars);
+    const allHits = [...hits, ...otherHits];
+    return {
+      hit: allHits.length > 0,
+      hits: allHits,
+      snapshot: snapshotAt(series, bars),
+      noData: false,
+    };
+  } catch {
+    return { hit: false, hits: [], noData: true };
+  }
+}
+
 /** 筛选统计 */
 export interface FilterStats {
   /** 参与筛选的股票总数 */
@@ -251,12 +507,15 @@ export function filterStocks(
   limit = 300
 ): FilterOutput {
   const needSignals = hasAnySignal(filter.signals);
+  const needRules = hasAnyRules(filter);
+  const needGap = filter.gapMin !== undefined;
+  const needKline = needSignals || needRules || needGap;
   const results: FilterResult[] = [];
   let passedBase = 0;
   let skippedNoKline = 0;
 
   let warning: string | undefined;
-  if (needSignals && !klineProvider) {
+  if (needKline && !klineProvider) {
     warning =
       '已设置技术指标条件，但未提供本地 K 线数据，信号条件已被忽略。请先在详情页下载 K 线。';
   }
@@ -272,111 +531,59 @@ export function filterStocks(
     if (!matchBase(stock, filter, rankMap)) continue;
     passedBase++;
 
-    if (!needSignals || !klineProvider) {
+    if (!needKline || !klineProvider) {
       results.push({ stock, hits: [] });
       if (results.length >= limit) break;
       continue;
     }
 
-    const sig = filter.signals!;
-    const hits: string[] = [];
+    const preHits: string[] = [];
 
-    // —— 周线 BBI 组：用周线数据判定 ——
-    if (hasWeeklyBBI(sig)) {
-      let weeklyBars: KlineBar[] | undefined;
-      try {
-        weeklyBars = klineProvider(stock.code, 'weekly');
-      } catch {
-        weeklyBars = undefined;
-      }
-      if (!weeklyBars || weeklyBars.length < 26) {
-        skippedNoKline++;
-        continue;
-      }
-      // 整策略开关：BBI>MA26 且 收盘>BBI
-      if (sig.weeklyBBIStrategy) {
-        const r = matchWeeklyBBI(weeklyBars);
-        if (!r.pass) continue;
-        hits.push(`周线BBI多头 (BBI ${r.weeklyBBI?.toFixed(2)}>MA26 ${r.weeklyMA26?.toFixed(2)})`);
-      }
-      // 分组条件（组内 AND）
-      const wHits = matchBBIGroup(weeklyBars, {
-        closeGtBBI: sig.weeklyCloseGtBBI,
-        bull: sig.weeklyBull,
-        bbiGtMA26: sig.weeklyBBIGtMA26,
-      });
-      const wExpected = [sig.weeklyCloseGtBBI, sig.weeklyBull, sig.weeklyBBIGtMA26].filter(Boolean).length;
-      if (wExpected > 0) {
-        if (wHits.length < wExpected) continue;
-        hits.push(...wHits.map((h) => `周线:${h}`));
-      }
-    }
-
-    // —— 日线 BBI 组：用日线数据判定 ——
-    if (hasDailyBBI(sig)) {
+    // —— 跳空缺口（日线） ——
+    if (needGap) {
       let dailyBars: KlineBar[] | undefined;
       try {
         dailyBars = klineProvider(stock.code, 'daily');
       } catch {
         dailyBars = undefined;
       }
-      if (!dailyBars || dailyBars.length < 26) {
+      if (!dailyBars || dailyBars.length < 2) {
         skippedNoKline++;
         continue;
       }
-      const dHits = matchBBIGroup(dailyBars, {
-        closeGtBBI: sig.dailyCloseGtBBI,
-        bbiGtMA26: sig.dailyBBIGtMA26,
-        fourCloseGtBBI: sig.daily4CloseGtBBI,
+      const g = gapPercent(dailyBars);
+      if (g === undefined || g < filter.gapMin!) continue;
+      preHits.push(`跳空缺口${g.toFixed(2)}%`);
+    }
+
+    // —— 技术指标规则（AND 组合，含适用周期） ——
+    if (needRules) {
+      const r = matchRules(stock, filter.rules!, klineProvider);
+      if (!r.pass) {
+        if (r.noData) skippedNoKline++;
+        continue;
+      }
+      preHits.push(...r.hits);
+    }
+
+    // —— 旧版扁平 signals（BBI 分组 + 日线信号） ——
+    if (needSignals) {
+      const sm = matchStockSignals(stock, filter.signals!, klineProvider);
+      if (sm.noData) {
+        skippedNoKline++;
+        continue;
+      }
+      if (!sm.hit) continue;
+      results.push({
+        stock,
+        snapshot: sm.snapshot,
+        hits: [...preHits, ...sm.hits],
       });
-      const dExpected = [sig.dailyCloseGtBBI, sig.dailyBBIGtMA26, sig.daily4CloseGtBBI].filter(Boolean).length;
-      if (dExpected > 0) {
-        if (dHits.length < dExpected) continue;
-        hits.push(...dHits.map((h) => `日线:${h}`));
-      }
-    }
-
-    // 判断是否还有 BBI 以外的其他日线信号
-    const onlyBBI = hasWeeklyBBI(sig) || hasDailyBBI(sig);
-    const hasOtherDailySignal = hasAnySignal({
-      ...sig,
-      weeklyBBIStrategy: undefined,
-      weeklyCloseGtBBI: undefined,
-      weeklyBull: undefined,
-      weeklyBBIGtMA26: undefined,
-      dailyCloseGtBBI: undefined,
-      daily4CloseGtBBI: undefined,
-      dailyBBIGtMA26: undefined,
-    });
-
-    if (onlyBBI && !hasOtherDailySignal) {
-      if (hits.length > 0) {
-        results.push({ stock, hits });
-        if (results.length >= limit) break;
-      }
-      continue;
-    }
-
-    let bars: KlineBar[] | undefined;
-    try {
-      bars = klineProvider(stock.code);
-    } catch {
-      bars = undefined;
-    }
-    if (!bars || bars.length < MIN_BARS_FOR_SIGNAL) {
-      skippedNoKline++;
-      continue;
-    }
-
-    try {
-      const series = calcAllIndicators(bars);
-      const otherHits = matchSignals(sig, series, bars);
-      if (otherHits.length > 0 || hits.length > 0) {
-        results.push({ stock, snapshot: snapshotAt(series, bars), hits: [...hits, ...otherHits] });
-        if (results.length >= limit) break;
-      }
-    } catch {
-      continue;
+      if (results.length >= limit) break;
+    } else {
+      // 只有 rules / gap（无扁平 signals）
+      results.push({ stock, hits: preHits });
+      if (results.length >= limit) break;
     }
   }
 
