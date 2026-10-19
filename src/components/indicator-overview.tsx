@@ -1,130 +1,109 @@
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { useTheme } from '@/hooks/use-theme';
-import { fmtPrice } from '@/lib/format';
-import type { IndicatorSnapshot } from '@/types/stock';
+import { indicatorColor } from '@/lib/indicator-palette';
 
 /**
- * 指标速览区（补充规格 §2.6）。
- * 六大指标固定顺序：MA / BOLL / MACD / KDJ / RSI / BBI，竖屏 2 行 × 3 列。
- * 与图表同源（同一 snapshot）；未开启的指标灰态 40%，点击卡片打开指标开关浮层。
+ * 指标速览带（补充规格 v1.2 §4.4）——一条横向条带，非卡片网格。
+ * 竖屏两行各 3 项（固定顺序 BBI/MA20/MA26/MACD/KDJ/RSI），横屏单行 6 项横滚。
+ * 单项 = 色点（同指标线色）+ 指标名 11pt + 数值 14pt 等宽 + 判定 10pt。
+ * 未开启项占位（40% 不透明）显示「未开启」，点按可直接开启。
  */
 
-export interface IndicatorOverviewProps {
-  snapshot: IndicatorSnapshot;
-  /** 最新收盘价（判定相对位置） */
-  latestClose: number;
-  /** MACD 交叉状态（详情页算好传入） */
-  macdCross?: 'golden' | 'dead' | null;
-  /** 各指标是否开启（主图/副图开关） */
-  enabled: { ma: boolean; boll: boolean; macd: boolean; kdj: boolean; rsi: boolean; bbi: boolean };
-  onOpenIndicators?: () => void;
+export interface OverviewItem {
+  key: 'bbi' | 'ma20' | 'ma26' | 'macd' | 'kdj' | 'rsi';
+  name: string;
+  value: string;
+  judge: string;
+  enabled: boolean;
 }
 
-const MA_COLORS = { 5: '#F5A623', 10: '#4DA3F5', 20: '#C77DFF', 60: '#8A8F98' };
+interface Props {
+  items: OverviewItem[];
+  /** 选中 bar 的日期（长按联动时显示） */
+  selectDate?: string | null;
+  landscape?: boolean;
+  /** 点按未开启项时开启该指标 */
+  onToggle?: (key: OverviewItem['key']) => void;
+  /** 「完整指标数值」入口 */
+  onOpenFull?: () => void;
+  isDark?: boolean;
+}
 
-export function IndicatorOverview({ snapshot: s, latestClose, macdCross, enabled, onOpenIndicators }: IndicatorOverviewProps) {
+export function IndicatorOverviewStrip({ items, selectDate, landscape = false, onToggle, onOpenFull, isDark = true }: Props) {
   const theme = useTheme();
 
-  const card = (key: string, title: string, on: boolean, main: React.ReactNode, sub: string) => (
-    <Pressable key={key} onPress={onOpenIndicators} style={styles.cardWrap}>
-      <View style={[styles.card, { backgroundColor: theme.backgroundElement, opacity: on ? 1 : 0.4 }]}>
-        <View style={styles.cardHead}>
-          <Text style={[styles.cardTitle, { color: theme.textSecondary }]}>{title}</Text>
-          {!on ? <Text style={[styles.offTag, { color: theme.textSecondary }]}>未开启</Text> : null}
+  const renderItem = (it: OverviewItem) => (
+    <Pressable
+      key={it.key}
+      onPress={() => { if (!it.enabled) onToggle?.(it.key); }}
+      style={landscape ? styles.itemLand : styles.item}
+      accessibilityLabel={`${it.name} ${it.value} ${it.judge}`}>
+      <View style={[styles.itemInner, { opacity: it.enabled ? 1 : 0.4 }]}>
+        <View style={styles.itemHead}>
+          <View style={[styles.dot, { backgroundColor: indicatorColor(it.key, isDark) }]} />
+          <Text style={[styles.name, { color: theme.textSecondary }]} numberOfLines={1}>{it.name}</Text>
         </View>
-        {main}
-        <Text style={[styles.cardSub, { color: theme.textSecondary }]} numberOfLines={1}>{sub}</Text>
+        <Text style={[styles.value, { color: theme.text }]} numberOfLines={1}>
+          {it.enabled ? it.value : '未开启'}
+        </Text>
+        {it.enabled ? (
+          <Text style={[styles.judge, { color: theme.textSecondary }]} numberOfLines={1}>{it.judge}</Text>
+        ) : null}
       </View>
     </Pressable>
   );
 
-  // MA：相对各均线位置
-  const maPos = [s.ma5, s.ma10, s.ma20, s.ma60]
-    .filter((v): v is number => v !== undefined)
-    .map((v) => (latestClose >= v ? '↑' : '↓'))
-    .join('');
-
-  // BOLL：相对轨道
-  let bollPos = '—';
-  if (s.bollUpper !== undefined && s.bollLower !== undefined) {
-    if (latestClose >= s.bollUpper) bollPos = '上轨上方';
-    else if (s.bollMid !== undefined && latestClose >= s.bollMid) bollPos = '中轨上方';
-    else if (s.bollMid !== undefined) bollPos = latestClose >= s.bollLower! ? '中轨下方' : '下轨下方';
-  }
-
-  // KDJ 超买超卖
-  const kdjZone = s.j === undefined ? '—' : s.j > 100 ? '超买' : s.j < 0 ? '超卖' : '中性';
-  // RSI 超买超卖
-  const rsiZone = s.rsi14 === undefined ? '—' : s.rsi14 > 70 ? '超买' : s.rsi14 < 30 ? '超卖' : '中性';
-  // BBI 相对位置
-  const bbiPos = s.bbi === undefined ? '—' : latestClose > s.bbi ? '收盘>BBI' : '收盘<BBI';
-  const bbiMa26 = s.bbi !== undefined && s.ma26 !== undefined ? (s.bbi > s.ma26 ? 'BBI>MA26' : 'BBI<MA26') : '—';
-
   return (
-    <View style={styles.grid}>
-      {card(
-        'ma', 'MA', enabled.ma,
-        <View style={styles.maRow}>
-          {[5, 10, 20, 60].map((p) => {
-            const v = s[`ma${p}` as keyof IndicatorSnapshot] as number | undefined;
-            return (
-              <View key={p} style={styles.maItem}>
-                <View style={[styles.dot, { backgroundColor: MA_COLORS[p as keyof typeof MA_COLORS] }]} />
-                <Text style={[styles.cardVal, { color: theme.text }]}>{fmtPrice(v)}</Text>
-              </View>
-            );
-          })}
-        </View>,
-        maPos ? `价格 ${maPos}` : '—'
-      )}
-      {card(
-        'boll', 'BOLL', enabled.boll,
-        <Text style={[styles.cardVal, { color: theme.text }]}>
-          {fmtPrice(s.bollUpper)} / {fmtPrice(s.bollMid)} / {fmtPrice(s.bollLower)}
-        </Text>,
-        bollPos
-      )}
-      {card(
-        'macd', 'MACD', enabled.macd,
-        <Text style={[styles.cardVal, { color: theme.text }]}>
-          DIF {fmtPrice(s.dif)} · 柱 {fmtPrice(s.macdHist)}
-        </Text>,
-        macdCross === 'golden' ? '当日金叉' : macdCross === 'dead' ? '当日死叉' : (s.macdHist ?? 0) >= 0 ? '柱为正' : '柱为负'
-      )}
-      {card(
-        'kdj', 'KDJ', enabled.kdj,
-        <Text style={[styles.cardVal, { color: theme.text }]}>
-          K {fmtPrice(s.k)} · D {fmtPrice(s.d)} · J {fmtPrice(s.j)}
-        </Text>,
-        kdjZone
-      )}
-      {card(
-        'rsi', 'RSI(14)', enabled.rsi,
-        <Text style={[styles.cardVal, { color: theme.text }]}>{fmtPrice(s.rsi14)}</Text>,
-        rsiZone
-      )}
-      {card(
-        'bbi', 'BBI', enabled.bbi,
-        <Text style={[styles.cardVal, { color: theme.text }]}>
-          {fmtPrice(s.bbi)} · MA26 {fmtPrice(s.ma26)}
-        </Text>,
-        `${bbiPos} · ${bbiMa26}`
+    <View style={styles.wrap}>
+      {landscape ? (
+        <View style={styles.landRow}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.landScroll}>
+            {items.map(renderItem)}
+          </ScrollView>
+          {onOpenFull ? (
+            <Pressable onPress={onOpenFull} hitSlop={8} style={styles.moreBtn}>
+              <Text style={[styles.moreText, { color: theme.textSecondary }]}>⋯</Text>
+            </Pressable>
+          ) : null}
+        </View>
+      ) : (
+        <>
+          <View style={styles.row}>{items.slice(0, 3).map(renderItem)}</View>
+          <View style={[styles.row, styles.rowGap]}>{items.slice(3, 6).map(renderItem)}</View>
+          {onOpenFull ? (
+            <View style={styles.footer}>
+              <Text style={[styles.latestTag, { color: theme.textSecondary }]}>
+                {selectDate ? selectDate : '最新'}
+              </Text>
+              <Pressable onPress={onOpenFull} hitSlop={10}>
+                <Text style={[styles.fullLink, { color: theme.textSecondary }]}>完整指标数值 ›</Text>
+              </Pressable>
+            </View>
+          ) : null}
+        </>
       )}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  cardWrap: { width: '31.8%' },
-  card: { borderRadius: 10, padding: 10, gap: 6, minHeight: 66 },
-  cardHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  cardTitle: { fontSize: 11 },
-  offTag: { fontSize: 9 },
-  cardVal: { fontSize: 13, fontWeight: '600', fontVariant: ['tabular-nums'] },
-  cardSub: { fontSize: 10 },
-  maRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
-  maItem: { flexDirection: 'row', alignItems: 'center', gap: 3 },
-  dot: { width: 5, height: 5, borderRadius: 3 },
+  wrap: { gap: 8 },
+  row: { flexDirection: 'row', gap: 8 },
+  rowGap: { marginTop: 8 },
+  item: { flex: 1, height: 60, justifyContent: 'center' },
+  itemLand: { width: 132, height: 52, justifyContent: 'center', marginRight: 10 },
+  itemInner: { gap: 2 },
+  itemHead: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  dot: { width: 8, height: 8, borderRadius: 4 },
+  name: { fontSize: 11 },
+  value: { fontSize: 14, fontWeight: '600', fontVariant: ['tabular-nums'] },
+  judge: { fontSize: 10 },
+  landRow: { flexDirection: 'row', alignItems: 'center' },
+  landScroll: { alignItems: 'center' },
+  moreBtn: { paddingLeft: 6 },
+  moreText: { fontSize: 16, fontWeight: '700' },
+  footer: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 4, height: 28 },
+  latestTag: { fontSize: 10 },
+  fullLink: { fontSize: 10 },
 });

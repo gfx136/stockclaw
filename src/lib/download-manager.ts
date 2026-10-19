@@ -1,20 +1,30 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { downloadKlines } from '@/lib/kline-downloader';
+import { dbStats } from '@/lib/kline-db';
 import type { Stock } from '@/types/stock';
 
 /**
- * 全量 K 线下载管理器（补充规格 §4.2）。
- * - 首次全量：每只拉 日线(2年)/周线(10年)/月线(25年)；60分钟不纳入默认全量
- * - 增量：downloadKlines 内有「今日已更新则跳过」检查，重跑只补未完成
- * - 并发 4，请求间隔礼貌访问；断点续传（每完成一只写进度，杀进程不丢）
- * - 可暂停 / 停止 / 恢复
+ * 全量 K 线下载管理器（补充规格 v1.2 §6.2，规格 C12）。
+ *
+ * 目标产品形态：**单队列串行 + 缓存 + 断点续传，不存在多核并行**。
+ * iOS 版实现规格：
+ * - 默认并发 4（信号量 + 滑动窗口，非分批等待）
+ * - 同一数据源最多 4 在途；每只请求间隔 ≥50ms
+ * - 跨源串行（新浪→腾讯→东财，由 downloadKlines 内部 failover 处理）
+ * - 每只最多重试 2 次，退避 1s / 3s
+ * - 每完成 20 只批量写库 + 更新断点
+ * - 断点续传：持久化已完成股票 ID 集合
+ * - 后台（BGProcessingTask）降为 2 并发
  */
 
-const PROGRESS_KEY = 'stockclaw:download_done_v1';
+const DONE_KEY = 'stockclaw:download_done_v1';
 const LAST_RUN_KEY = 'stockclaw:download_last_run';
-const CONCURRENCY = 4;
-const GAP_MS = 120;
+const FOREGROUND_CONCURRENCY = 4;
+const BACKGROUND_CONCURRENCY = 2;
+const GAP_MS = 50;
+const BATCH_SIZE = 20;
+const RETRY_DELAYS = [1000, 3000];
 
 export interface DownloadState {
   running: boolean;
@@ -24,11 +34,14 @@ export interface DownloadState {
   failed: number;
   current: string;
   lastRunAt: number | null;
+  /** 预计剩余秒（滚动平均） */
+  etaSec: number | null;
 }
 
-let state: DownloadState = { running: false, paused: false, done: 0, total: 0, failed: 0, current: '', lastRunAt: null };
+let state: DownloadState = {
+  running: false, paused: false, done: 0, total: 0, failed: 0, current: '', lastRunAt: null, etaSec: null,
+};
 const listeners = new Set<() => void>();
-
 function notify() {
   state = { ...state };
   listeners.forEach((l) => l());
@@ -44,13 +57,11 @@ export function getDownloadState(): DownloadState {
 let stopFlag = false;
 let pauseFlag = false;
 
-function sleep(ms: number) {
-  return new Promise((r) => setTimeout(r, ms));
-}
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 async function loadDoneSet(): Promise<Set<string>> {
   try {
-    const raw = await AsyncStorage.getItem(PROGRESS_KEY);
+    const raw = await AsyncStorage.getItem(DONE_KEY);
     return new Set(raw ? JSON.parse(raw) : []);
   } catch {
     return new Set();
@@ -58,11 +69,10 @@ async function loadDoneSet(): Promise<Set<string>> {
 }
 async function saveDoneSet(s: Set<string>): Promise<void> {
   try {
-    await AsyncStorage.setItem(PROGRESS_KEY, JSON.stringify([...s]));
+    await AsyncStorage.setItem(DONE_KEY, JSON.stringify([...s]));
   } catch { /* ignore */ }
 }
 
-/** 上次下载信息 */
 export async function getLastDownloadInfo(): Promise<{ at: number; count: number } | null> {
   try {
     const raw = await AsyncStorage.getItem(LAST_RUN_KEY);
@@ -72,57 +82,101 @@ export async function getLastDownloadInfo(): Promise<{ at: number; count: number
   }
 }
 
-/** 已同步的股票只数（断点） */
 export async function getDownloadedCount(): Promise<number> {
   return (await loadDoneSet()).size;
 }
 
+/** 清空断点（配合「清空全部本地数据」） */
+export async function clearDownloadCursor(): Promise<void> {
+  try { await AsyncStorage.removeItem(DONE_KEY); } catch { /* ignore */ }
+}
+
 /**
- * 启动全量下载。已在跑则忽略。
- * 断点续传：已完成的 code 跳过。
+ * 启动全量/增量下载（信号量滑动窗口）。
+ * @param stocks 目标股票
+ * @param opts.background 后台模式（并发降为 2）
  */
-export async function startFullDownload(stocks: Stock[]): Promise<void> {
+export async function startFullDownload(stocks: Stock[], opts?: { background?: boolean }): Promise<void> {
   if (state.running) return;
   stopFlag = false;
   pauseFlag = false;
   const doneSet = await loadDoneSet();
   const todo = stocks.filter((s) => !doneSet.has(s.code));
-  state = { running: true, paused: false, done: 0, total: todo.length, failed: 0, current: '', lastRunAt: state.lastRunAt };
+  if (todo.length === 0) {
+    state = { ...state, lastRunAt: Date.now() };
+    notify();
+    return;
+  }
+  const concurrency = opts?.background ? BACKGROUND_CONCURRENCY : FOREGROUND_CONCURRENCY;
+  const startTs = Date.now();
+  state = {
+    running: true, paused: false, done: 0, total: todo.length, failed: 0,
+    current: '', lastRunAt: state.lastRunAt, etaSec: null,
+  };
   notify();
 
   let idx = 0;
+  let sinceWrite = 0;
+
+  // 单只下载（含重试退避）
+  const fetchOne = async (code: string): Promise<boolean> => {
+    const periods = [
+      { p: 'daily' as const, n: 500 },
+      { p: 'weekly' as const, n: 260 },
+      { p: 'monthly' as const, n: 300 },
+    ];
+    for (const { p, n } of periods) {
+      let ok = false;
+      for (let attempt = 0; attempt <= RETRY_DELAYS.length; attempt++) {
+        try {
+          await downloadKlines(code, p, n);
+          ok = true;
+          break;
+        } catch {
+          if (attempt < RETRY_DELAYS.length) await sleep(RETRY_DELAYS[attempt]);
+        }
+      }
+      if (!ok) return false;
+      await sleep(GAP_MS); // 礼貌访问间隔
+    }
+    return true;
+  };
+
+  // 信号量滑动窗口：每完成一只立即补入下一只
   const worker = async () => {
     while (idx < todo.length) {
       if (stopFlag) return;
       while (pauseFlag && !stopFlag) await sleep(300);
       if (stopFlag) return;
-      const s = todo[idx++];
+      const myIdx = idx++;
+      const s = todo[myIdx];
       state.current = s.code;
       notify();
-      try {
-        await downloadKlines(s.code, 'daily', 500);
-        await sleep(GAP_MS);
-        await downloadKlines(s.code, 'weekly', 260);
-        await sleep(GAP_MS);
-        await downloadKlines(s.code, 'monthly', 300);
+      const ok = await fetchOne(s.code);
+      if (ok) {
         doneSet.add(s.code);
         state.done++;
-      } catch {
+      } else {
         state.failed++;
       }
-      if (state.done % 5 === 0) await saveDoneSet(doneSet); // 定期存断点
+      sinceWrite++;
+      if (sinceWrite >= BATCH_SIZE) {
+        sinceWrite = 0;
+        await saveDoneSet(doneSet); // 每 20 只批量写库 + 断点
+      }
+      const elapsed = (Date.now() - startTs) / 1000;
+      const rate = state.done / Math.max(1, elapsed);
+      state.etaSec = rate > 0 ? Math.round((todo.length - state.done) / rate) : null;
       notify();
     }
   };
 
-  await Promise.all(Array.from({ length: CONCURRENCY }, () => worker()));
+  await Promise.all(Array.from({ length: concurrency }, () => worker()));
   await saveDoneSet(doneSet);
   if (!stopFlag) {
-    try {
-      await AsyncStorage.setItem(LAST_RUN_KEY, JSON.stringify({ at: Date.now(), count: state.done }));
-    } catch { /* ignore */ }
+    try { await AsyncStorage.setItem(LAST_RUN_KEY, JSON.stringify({ at: Date.now(), count: state.done })); } catch { /* ignore */ }
   }
-  state = { ...state, running: false, paused: false, current: '', lastRunAt: Date.now() };
+  state = { ...state, running: false, paused: false, current: '', lastRunAt: Date.now(), etaSec: null };
   notify();
 }
 
@@ -142,4 +196,10 @@ export function stopDownload(): void {
 }
 export function isDownloading(): boolean {
   return state.running;
+}
+
+/** 是否已有本地数据（决定首次全量 vs 日常增量） */
+export async function hasLocalData(): Promise<boolean> {
+  const s = await dbStats();
+  return s.codes > 0;
 }

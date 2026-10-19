@@ -93,6 +93,38 @@ export const getShowKdj = () => getBool('ind_kdj', false);
 export const setShowKdj = (v: boolean) => setBool('ind_kdj', v);
 export const getShowRsi = () => getBool('ind_rsi', false);
 export const setShowRsi = (v: boolean) => setBool('ind_rsi', v);
-/** 详情页方向偏好（规格 §2.10：记住横屏偏好） */
+/** 详情页方向偏好（规格 §4.6：记住横屏偏好） */
 export const getDetailLandscape = () => getBool('detail_landscape', false);
 export const setDetailLandscape = (v: boolean) => setBool('detail_landscape', v);
+
+/** 副图指标（互斥单选） */
+export type SubIndicatorKey = 'macd' | 'kdj' | 'rsi' | 'volume' | 'amount';
+export const getSubIndicator = async (): Promise<SubIndicatorKey> => {
+  const v = await getStr<string>('sub_indicator', 'macd');
+  return (['macd', 'kdj', 'rsi', 'volume', 'amount'].includes(v) ? v : 'macd') as SubIndicatorKey;
+};
+export const setSubIndicator = (v: SubIndicatorKey) => setStr('sub_indicator', v);
+
+/** 默认可见 K 线根数（§6.3：滑杆 20-200，默认 60） */
+export async function getDefaultBars(): Promise<number> {
+  const v = await getStr<string>('default_bars', '60');
+  const n = parseInt(v, 10);
+  return Number.isFinite(n) && n >= 20 && n <= 200 ? n : 60;
+}
+export const setDefaultBars = (n: number) => setStr('default_bars', String(n));
+
+/** 10 个指标独立开关（§2.4） */
+const IND_KEYS = ['ma5', 'ma10', 'ma20', 'ma26', 'ma60', 'boll', 'bbi', 'macd', 'kdj', 'rsi'] as const;
+export type IndToggleKey = (typeof IND_KEYS)[number];
+const IND_DEFAULTS: Record<IndToggleKey, boolean> = {
+  ma5: true, ma10: true, ma20: true, ma26: true, ma60: false,
+  boll: false, bbi: true, macd: true, kdj: false, rsi: false,
+};
+export async function getIndicatorToggles(): Promise<Record<IndToggleKey, boolean>> {
+  const out = { ...IND_DEFAULTS };
+  for (const k of IND_KEYS) out[k] = await getBool(`ind_${k}`, IND_DEFAULTS[k]);
+  return out;
+}
+export async function setIndicatorToggle(k: IndToggleKey, v: boolean): Promise<void> {
+  await setBool(`ind_${k}`, v);
+}

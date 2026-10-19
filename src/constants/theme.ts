@@ -32,6 +32,19 @@ export const Colors = {
 
 export type ThemeColor = keyof typeof Colors.light & keyof typeof Colors.dark;
 
+/**
+ * 语义色（补充规格 §5.4 色彩纪律）：成功/警告/错误 专用，不得挪作他用。
+ * 涨跌色不在此处——它是 A 股专用语义（涨红跌绿），见 lib/format.ts 的 QuoteColors。
+ */
+export const SemanticColors = {
+  light: { success: '#0F9B6C', warning: '#B26A00', danger: '#D63030' },
+  dark: { success: '#26A69A', warning: '#FFB300', danger: '#FF5252' },
+} as const;
+
+export function semanticColor(kind: 'success' | 'warning' | 'danger', isDark: boolean): string {
+  return isDark ? SemanticColors.dark[kind] : SemanticColors.light[kind];
+}
+
 export const Fonts = Platform.select({
   ios: {
     /** iOS `UIFontDescriptorSystemDesignDefault` */

@@ -124,3 +124,14 @@ export function marketName(code: string): string {
 export function cardBg(scheme: 'light' | 'dark' | null | undefined): string {
   return scheme === 'dark' ? Colors.dark.backgroundElement : Colors.light.backgroundElement;
 }
+
+/** 时间戳（秒）→ 「10-17 15:00」 */
+export function monthDayTime(ts: number | null | undefined): string {
+  if (!ts) return '—';
+  const d = new Date(ts * 1000);
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mi = String(d.getMinutes()).padStart(2, '0');
+  return `${mm}-${dd} ${hh}:${mi}`;
+}

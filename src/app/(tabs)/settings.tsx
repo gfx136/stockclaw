@@ -9,6 +9,7 @@ import { fetchAllStocks } from '@/lib/api/failover';
 import {
   getDownloadedCount,
   getDownloadState,
+  hasLocalData,
   pauseDownload,
   resumeDownload,
   startFullDownload,
@@ -26,11 +27,13 @@ import {
 } from '@/lib/api/failover';
 import {
   getBackgroundDownload,
+  getDefaultBars,
   getIncrementalUpdate,
   getLanguage,
   getLocalDataMode,
   getThemePref,
   setBackgroundDownload,
+  setDefaultBars,
   setIncrementalUpdate,
   setLanguage,
   setLocalDataMode,
@@ -54,6 +57,7 @@ export default function SettingsScreen() {
   const router = useRouter();
   const [stats, setStats] = useState<Stats | null>(null);
   const [downloadedCount, setDownloadedCount] = useState(0);
+  const [defaultBars, setDefaultBarsState] = useState(60);
   const dlState = useSyncExternalStore(subscribeDownload, getDownloadState, getDownloadState);
   const [sourceMode, setSourceModeState] = useState<SourceMode>('auto');
   const [localMode, setLocalMode] = useState(true);
@@ -82,6 +86,7 @@ export default function SettingsScreen() {
         setLanguageState(await getLanguage());
         setThemePrefState(await getThemePref());
         setDownloadedCount(await getDownloadedCount());
+        setDefaultBarsState(await getDefaultBars());
       })();
       return () => {
         active = false;
@@ -94,11 +99,11 @@ export default function SettingsScreen() {
     setSourceModeState(mode);
   }, []);
 
-  /** 下载/更新本地 K 线（规格 §4.2） */
+  /** 下载/更新本地 K 线（补充规格 §6.1 四状态文案） */
   const onDownloadAll = useCallback(async () => {
+    // 状态2：上一次仍在进行
     if (dlState.running) {
-      // 下载中：弹暂停/停止
-      Alert.alert('下载进行中', `已完成 ${dlState.done}/${dlState.total}`, [
+      Alert.alert('下载进行中', `正在下载本地 K 线 ${dlState.done}/${dlState.total}`, [
         dlState.paused
           ? { text: '继续', onPress: () => resumeDownload() }
           : { text: '暂停', onPress: () => pauseDownload() },
@@ -113,7 +118,21 @@ export default function SettingsScreen() {
         Alert.alert('提示', '未取到股票列表，请检查网络。');
         return;
       }
-      startFullDownload(stocks); // 后台执行，状态经 subscribeDownload 推送
+      const hasData = await hasLocalData();
+      if (!hasData) {
+        // 状态3：首次全量 —— 开始前确认
+        Alert.alert(
+          '首次全量下载',
+          '首次全量下载 K 线数据需要几分钟，建议在 Wi-Fi 下进行，且可切到后台继续。',
+          [
+            { text: '取消', style: 'cancel' },
+            { text: '开始下载', onPress: () => { startFullDownload(stocks); } },
+          ]
+        );
+      } else {
+        // 状态4：日常增量 —— 直接启动
+        startFullDownload(stocks);
+      }
     } catch (e) {
       Alert.alert('启动失败', e instanceof Error ? e.message : '请检查网络');
     }
@@ -181,11 +200,19 @@ export default function SettingsScreen() {
               {speedResults.map((r) => (
                 <View key={r.id} style={styles.speedRow}>
                   <Text style={[styles.speedName, { color: theme.text }]}>{r.name}</Text>
-                  <Text style={[styles.speedVal, { color: r.ok ? '#0AA869' : '#E43B3B' }]}>
-                    {r.ok ? `${r.latencyMs}ms` : '不可用'}
+                  <Text style={[styles.speedVal, { color: r.ok ? '#26A69A' : '#FF5252' }]}>
+                    {r.ok ? `${r.latencyMs}ms` : '不可用'} · 成功率 {r.successRate}%
                   </Text>
+                  {r.ok ? (
+                    <Pressable onPress={() => onSelectSource(r.id)} hitSlop={6}>
+                      <Text style={[styles.speedSet, { color: theme.tint }]}>设为源</Text>
+                    </Pressable>
+                  ) : null}
                 </View>
               ))}
+              <Text style={[styles.speedNote, { color: theme.textSecondary }]}>
+                测速结果仅供参考，实际速度受网络环境影响
+              </Text>
             </View>
           ) : null}
         </Section>
@@ -208,6 +235,11 @@ export default function SettingsScreen() {
                   <View style={[styles.progressTrack, { backgroundColor: theme.background }]}>
                     <View style={[styles.progressFill, { backgroundColor: theme.tint, width: `${dlState.total ? (dlState.done / dlState.total) * 100 : 0}%` }]} />
                   </View>
+                ) : null}
+                {dlState.running ? (
+                  <Text style={[styles.dlNote, { color: theme.textSecondary }]}>
+                    可切后台继续下载，通知栏实时显示进度。
+                  </Text>
                 ) : null}
               </View>
               {dlState.running ? <ActivityIndicator size="small" /> : <Text style={[styles.rowValue, { color: theme.textSecondary }]}>›</Text>}
@@ -240,6 +272,27 @@ export default function SettingsScreen() {
             onChange={async (v) => { setIncremental(v); await setIncrementalUpdate(v); }}
             theme={theme}
           />
+        </Section>
+
+        {/* 图表 */}
+        <Section title="图表" theme={theme}>
+          <View style={styles.row}>
+            <View style={styles.sourceLeft}>
+              <Text style={[styles.rowLabel, { color: theme.text }]}>默认可见 K 线根数</Text>
+              <Text style={[styles.sourceDesc, { color: theme.textSecondary }]}>
+                当前 {defaultBars} 根（20 ~ 200）；详情页「复位」回到该值
+              </Text>
+            </View>
+          </View>
+          <View style={styles.sliderRow}>
+            {[40, 60, 90, 120, 160, 200].map((n) => (
+              <Pressable key={n} onPress={async () => { setDefaultBarsState(n); await setDefaultBars(n); }} style={styles.sliderItem}>
+                <View style={[styles.sliderChip, { backgroundColor: defaultBars === n ? theme.tint : theme.backgroundElement }]}>
+                  <Text style={[styles.sliderText, { color: defaultBars === n ? '#fff' : theme.text }]}>{n}</Text>
+                </View>
+              </Pressable>
+            ))}
+          </View>
         </Section>
 
         {/* 后台下载 */}
@@ -334,13 +387,16 @@ function SwitchRow({ label, desc, value, onChange, theme }: {
   theme: ReturnType<typeof useTheme>;
 }) {
   return (
-    <View style={styles.row}>
-      <View style={styles.sourceLeft}>
-        <Text style={[styles.rowLabel, { color: theme.text }]}>{label}</Text>
-        {desc ? <Text style={[styles.sourceDesc, { color: theme.textSecondary }]}>{desc}</Text> : null}
+    // 整行可点（iOS 惯例：Switch 行整行切换，减少误触）
+    <Pressable onPress={() => onChange(!value)} accessibilityRole="switch" accessibilityState={{ checked: value }}>
+      <View style={styles.row} pointerEvents="box-none">
+        <View style={styles.sourceLeft}>
+          <Text style={[styles.rowLabel, { color: theme.text }]}>{label}</Text>
+          {desc ? <Text style={[styles.sourceDesc, { color: theme.textSecondary }]}>{desc}</Text> : null}
+        </View>
+        <Switch value={value} onValueChange={onChange} />
       </View>
-      <Switch value={value} onValueChange={onChange} />
-    </View>
+    </Pressable>
   );
 }
 
@@ -388,10 +444,17 @@ const styles = StyleSheet.create({
   speedRow: { flexDirection: 'row', justifyContent: 'space-between' },
   speedName: { fontSize: 13 },
   speedVal: { fontSize: 13, fontWeight: '600', fontVariant: ['tabular-nums'] },
+  speedSet: { fontSize: 12, fontWeight: '600', marginLeft: 8 },
+  speedNote: { fontSize: 10, marginTop: 6 },
   segRow: { flexDirection: 'row', padding: 6, gap: 6 },
   segBtnWrap: { flex: 1 },
   segBtn: { paddingVertical: 8, borderRadius: 8, alignItems: 'center' },
   segText: { fontSize: 13, fontWeight: '600' },
   progressTrack: { height: 4, borderRadius: 2, marginTop: 8, overflow: 'hidden' },
   progressFill: { height: 4, borderRadius: 2 },
+  dlNote: { fontSize: 10, marginTop: 4, lineHeight: 14 },
+  sliderRow: { flexDirection: 'row', gap: 8, paddingHorizontal: 14, paddingBottom: 12 },
+  sliderItem: { flex: 1 },
+  sliderChip: { height: 34, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
+  sliderText: { fontSize: 13, fontWeight: '600' },
 });

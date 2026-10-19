@@ -147,30 +147,43 @@ export function listSources(): { id: SourceMode; name: string; desc: string }[] 
 export interface SpeedTestResult {
   id: DataSourceId;
   name: string;
-  /** 延迟毫秒；失败为 -1 */
+  /** 延迟中位数（毫秒）；全部失败为 -1 */
   latencyMs: number;
   ok: boolean;
+  /** 成功率 0-100 */
+  successRate: number;
   error?: string;
 }
 
-/** 实测各数据源的 K 线接口延迟与可用性（用 600519 日线做探针） */
+/**
+ * 连接测速（补充规格 §6.3）：对每个源各发起 3 次小样本请求，取延迟**中位数**，并统计成功率。
+ * 用于解释「为什么换源」。
+ */
 export async function speedTestSources(): Promise<SpeedTestResult[]> {
   const probe = async (src: DataSource): Promise<SpeedTestResult> => {
-    const start = Date.now();
-    try {
-      const bars = await src.fetchKlines('600519', 'daily', 5);
-      const latencyMs = Date.now() - start;
-      return { id: src.id, name: src.name, latencyMs, ok: bars.length > 0 };
-    } catch (e) {
-      return {
-        id: src.id,
-        name: src.name,
-        latencyMs: -1,
-        ok: false,
-        error: e instanceof Error ? e.message : String(e),
-      };
+    const lats: number[] = [];
+    let okCount = 0;
+    let lastErr: string | undefined;
+    for (let i = 0; i < 3; i++) {
+      const start = Date.now();
+      try {
+        const bars = await src.fetchKlines('600519', 'daily', 5);
+        if (bars.length > 0) { lats.push(Date.now() - start); okCount++; }
+        else lastErr = '返回空';
+      } catch (e) {
+        lastErr = e instanceof Error ? e.message : String(e);
+      }
     }
+    const sorted = [...lats].sort((a, b) => a - b);
+    const median = sorted.length > 0 ? sorted[Math.floor(sorted.length / 2)] : -1;
+    return {
+      id: src.id,
+      name: src.name,
+      latencyMs: median,
+      ok: okCount > 0,
+      successRate: Math.round((okCount / 3) * 100),
+      error: okCount === 0 ? lastErr : undefined,
+    };
   };
-  // 并发测，取各自结果
   return Promise.all(SOURCES.map(probe));
 }

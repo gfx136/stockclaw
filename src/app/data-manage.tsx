@@ -3,6 +3,8 @@ import { useCallback, useEffect, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
+import { semanticColor } from '@/constants/theme';
+import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useTheme } from '@/hooks/use-theme';
 import { clearAllKlines, deleteByPeriod, dbStats, lastUpdateAt, perPeriodStats, type PeriodStat } from '@/lib/kline-db';
 import type { KlinePeriod } from '@/types/stock';
@@ -20,6 +22,14 @@ const PERIOD_LABEL: Record<KlinePeriod, string> = {
   monthly: '月线',
 };
 
+/** 周期固定色标（§6.3：便于与图表周期切换对照） */
+const PERIOD_COLOR: Record<KlinePeriod, string> = {
+  '60min': '#4DA3F5',
+  daily: '#26A69A',
+  weekly: '#FFB300',
+  monthly: '#E91E63',
+};
+
 function fmtBytes(b: number): string {
   if (b <= 0) return '0 B';
   if (b >= 1024 * 1024 * 1024) return `${(b / 1024 / 1024 / 1024).toFixed(2)} GB`;
@@ -35,6 +45,7 @@ function fmtTime(ts: number | null): string {
 
 export default function DataManageScreen() {
   const theme = useTheme();
+  const isDark = useColorScheme() === 'dark';
   const [stats, setStats] = useState<{ totalBars: number; codes: number; bytes: number } | null>(null);
   const [periods, setPeriods] = useState<PeriodStat[]>([]);
   const [lastUpdate, setLastUpdate] = useState<number | null>(null);
@@ -105,13 +116,16 @@ export default function DataManageScreen() {
           {periods.map((p) => (
             <View key={p.period} style={[styles.periodRow, { borderBottomColor: theme.border }]}>
               <View style={styles.periodInfo}>
-                <Text style={[styles.periodName, { color: theme.text }]}>{PERIOD_LABEL[p.period]}</Text>
+                <View style={styles.periodNameRow}>
+                  <View style={[styles.periodSwatch, { backgroundColor: PERIOD_COLOR[p.period] }]} />
+                  <Text style={[styles.periodName, { color: theme.text }]}>{PERIOD_LABEL[p.period]}</Text>
+                </View>
                 <Text style={[styles.periodMeta, { color: theme.textSecondary }]}>
                   {p.codes} 只 · {p.bars.toLocaleString()} 根 · {fmtTime(p.lastUpdate)}
                 </Text>
               </View>
               <Pressable onPress={() => onDeletePeriod(p)} hitSlop={6} disabled={p.codes === 0}>
-                <Text style={[styles.deleteText, { color: p.codes === 0 ? theme.textSecondary : '#E43B3B' }]}>删除</Text>
+                <Text style={[styles.deleteText, { color: p.codes === 0 ? theme.textSecondary : semanticColor('danger', isDark) }]}>删除</Text>
               </Pressable>
             </View>
           ))}
@@ -120,7 +134,7 @@ export default function DataManageScreen() {
         {/* 清空全部 */}
         <Pressable onPress={onClearAll}>
           <View style={[styles.clearBtn, { backgroundColor: theme.backgroundElement }]}>
-            <Text style={[styles.clearText, { color: '#E43B3B' }]}>清空全部</Text>
+            <Text style={[styles.clearText, { color: semanticColor('danger', isDark) }]}>清空全部</Text>
           </View>
         </Pressable>
 
@@ -151,6 +165,8 @@ const styles = StyleSheet.create({
   rowValue: { fontSize: 13, fontVariant: ['tabular-nums'] },
   periodRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth },
   periodInfo: { flex: 1, gap: 2 },
+  periodNameRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  periodSwatch: { width: 10, height: 10, borderRadius: 2 },
   periodName: { fontSize: 14, fontWeight: '600' },
   periodMeta: { fontSize: 11 },
   deleteText: { fontSize: 13, fontWeight: '600' },
