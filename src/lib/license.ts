@@ -1,9 +1,10 @@
 import * as ed from '@noble/ed25519';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Application from 'expo-application';
-import * as Crypto from 'expo-crypto';
 import * as Device from 'expo-device';
 import { Base64 } from 'js-base64';
+import { sha256 } from 'js-sha256';
+import { sha512 } from 'js-sha512';
 
 /**
  * 会员授权系统（产品规格 4.5）。
@@ -34,7 +35,7 @@ function bytesToHex(bytes: Uint8Array): string {
   return s;
 }
 
-/* 给 @noble/ed25519 配置 sha512（用 expo-crypto 实现） */
+/* 给 @noble/ed25519 配置 sha512（用纯 JS js-sha512 实现，无原生依赖） */
 let edReady = false;
 function ensureEd() {
   if (edReady) return;
@@ -46,13 +47,7 @@ function ensureEd() {
       concat.set(m, off);
       off += m.length;
     }
-    // expo-crypto：输入按 HEX 编码解析后再 digest
-    const hex = await Crypto.digestStringAsync(
-      Crypto.CryptoDigestAlgorithm.SHA512,
-      bytesToHex(concat),
-      { encoding: Crypto.CryptoEncoding.HEX }
-    );
-    return hexToBytes(hex);
+    return hexToBytes(sha512(concat));
   };
   ed.hashes.sha512Async = sha512Async as unknown as typeof ed.hashes.sha512Async;
   ed.hashes.sha512 = (() => {
@@ -67,7 +62,7 @@ export async function getDeviceCode(): Promise<string> {
   const model = Device.modelName ?? 'unknown';
   const os = Device.osVersion ?? 'unknown';
   const fingerprint = `${ivf}|${model}|${os}`;
-  const hash = await Crypto.digestStringAsync(Crypto.CryptoDigestAlgorithm.SHA256, fingerprint);
+  const hash = sha256(fingerprint);
   const c = hash.slice(0, 12).toUpperCase();
   return `${c.slice(0, 4)}-${c.slice(4, 8)}-${c.slice(8, 12)}`;
 }
@@ -83,10 +78,7 @@ export interface LicenseState {
 }
 
 async function integrityHmac(deviceCode: string, expiry: number, serial: number): Promise<string> {
-  return Crypto.digestStringAsync(
-    Crypto.CryptoDigestAlgorithm.SHA256,
-    `${INTEGRITY_KEY}|${deviceCode}|${expiry}|${serial}`
-  );
+  return sha256(`${INTEGRITY_KEY}|${deviceCode}|${expiry}|${serial}`);
 }
 
 /** 读取激活状态（含完整性校验） */
