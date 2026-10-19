@@ -1,7 +1,5 @@
 import * as ed from '@noble/ed25519';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import * as Application from 'expo-application';
-import * as Device from 'expo-device';
 import { Base64 } from 'js-base64';
 import { sha256 } from 'js-sha256';
 import { sha512 } from 'js-sha512';
@@ -56,13 +54,29 @@ function ensureEd() {
   edReady = true;
 }
 
-/** 生成本机设备码：XXXX-XXXX-XXXX */
+/** 生成持久 UUID（首次启动生成并存本地，卸载重装后会变——需重新激活，文案已说明） */
+async function getDeviceId(): Promise<string> {
+  const KEY = 'stockclaw:device_id';
+  try {
+    let id = await AsyncStorage.getItem(KEY);
+    if (!id) {
+      id = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+        const r = (Math.random() * 16) | 0;
+        const v = c === 'x' ? r : (r & 0x3) | 0x8;
+        return v.toString(16);
+      });
+      await AsyncStorage.setItem(KEY, id);
+    }
+    return id;
+  } catch {
+    return 'unknown-device';
+  }
+}
+
+/** 生成本机设备码：XXXX-XXXX-XXXX（持久 UUID 的 SHA-256 前 6 字节） */
 export async function getDeviceCode(): Promise<string> {
-  const ivf = (await Application.getIosIdForVendorAsync().catch(() => null)) ?? 'unknown';
-  const model = Device.modelName ?? 'unknown';
-  const os = Device.osVersion ?? 'unknown';
-  const fingerprint = `${ivf}|${model}|${os}`;
-  const hash = sha256(fingerprint);
+  const id = await getDeviceId();
+  const hash = sha256(id);
   const c = hash.slice(0, 12).toUpperCase();
   return `${c.slice(0, 4)}-${c.slice(4, 8)}-${c.slice(8, 12)}`;
 }
