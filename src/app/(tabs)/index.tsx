@@ -362,13 +362,27 @@ export default function AllStocksScreen() {
   );
 }
 
-/** 骨架行（规格 §1.8：12 行，3 个灰色占位，无扫光动画） */
+/** 骨架行（规格 §1.8：12 行占位，5 列与实体列宽一致，避免加载完成瞬间跳变） */
 function SkeletonRow({ theme }: { theme: ReturnType<typeof useTheme> }) {
+  const bar = (flex: number, w: number | string, h: number) => (
+    <View style={[styles.skCol, { flex }]}>
+      <View style={[styles.skeleton, { width: w as number, height: h, backgroundColor: theme.backgroundElement }]} />
+    </View>
+  );
   return (
     <View style={styles.skeletonRow}>
-      <View style={[styles.skeleton, { width: '22%', height: 13, backgroundColor: theme.backgroundElement }]} />
-      <View style={[styles.skeleton, { width: '26%', height: 15, backgroundColor: theme.backgroundElement }]} />
-      <View style={[styles.skeleton, { width: '16%', height: 17, backgroundColor: theme.backgroundElement }]} />
+      {bar(22, 52, 13)}
+      {bar(26, 64, 15)}
+      <View style={[styles.skCol, styles.skRight, { flex: 16 }]}>
+        <View style={[styles.skeleton, { width: 44, height: 17, backgroundColor: theme.backgroundElement }]} />
+      </View>
+      <View style={[styles.skCol, styles.skRight, { flex: 16 }]}>
+        <View style={[styles.skeleton, { width: 40, height: 12, backgroundColor: theme.backgroundElement }]} />
+      </View>
+      <View style={[styles.skCol, styles.skRight, { flex: 20 }]}>
+        <View style={[styles.skeleton, { width: 44, height: 12, backgroundColor: theme.backgroundElement }]} />
+      </View>
+      <View style={styles.thStar} />
     </View>
   );
 }
@@ -413,7 +427,9 @@ const styles = StyleSheet.create({
   toastWrap: { position: 'absolute', top: 100, left: 0, right: 0, alignItems: 'center', zIndex: 20 },
   toast: { height: 36, borderRadius: 8, paddingHorizontal: 16, justifyContent: 'center' },
   toastText: { fontSize: 13, fontWeight: '500' },
-  skeletonRow: { height: 56, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, gap: 12 },
+  skeletonRow: { height: 56, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16 },
+  skCol: { justifyContent: 'center' },
+  skRight: { alignItems: 'flex-end' },
   skeleton: { borderRadius: 4 },
   menuMask: { flex: 1, backgroundColor: 'rgba(0,0,0,0.3)', justifyContent: 'flex-start', alignItems: 'flex-end' },
   menu: { marginTop: 100, marginRight: 16, borderRadius: 12, paddingVertical: 6, minWidth: 180, elevation: 8 },

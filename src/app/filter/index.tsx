@@ -304,7 +304,7 @@ const styles = StyleSheet.create({
   chipText: { fontSize: 13 },
   rangeRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
   rangeLabel: { width: 96 },
-  rangeInput: { flex: 1, height: 38, borderRadius: 8, paddingHorizontal: 12, fontSize: 15 },
+  rangeInput: { flex: 1, height: 44, borderRadius: 8, paddingHorizontal: 12, fontSize: 15 },
   switchRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 4 },
   switchLabel: {},
   tip: { marginTop: 8, lineHeight: 20 },

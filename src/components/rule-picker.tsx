@@ -1,6 +1,8 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { useTheme } from '@/hooks/use-theme';
+import { useColorScheme } from '@/hooks/use-color-scheme';
+import { indicatorColor } from '@/lib/indicator-palette';
 import { ruleLabel, type IndicatorRule, type IndicatorRuleKind, type KlinePeriod } from '@/types/stock';
 
 /**
@@ -92,6 +94,17 @@ function ruleKey(r: { kind: IndicatorRuleKind; value?: number }): string {
   return `${r.kind}:${r.value ?? ''}`;
 }
 
+/** 规则 → 指标色板键（第五处同色：筛选面板与图表/图例/速览带一致） */
+function ruleColorKey(kind: IndicatorRuleKind): string {
+  if (kind.startsWith('bbi')) return 'bbi';
+  if (kind.startsWith('ma_')) return kind.includes('26') ? 'ma26' : 'ma20';
+  if (kind.startsWith('boll')) return 'boll';
+  if (kind.startsWith('macd')) return 'macdDif';
+  if (kind.startsWith('kdj')) return 'kdjJ';
+  if (kind.startsWith('rsi')) return 'rsi';
+  return 'ma20';
+}
+
 export function RulePicker({
   rules,
   onChange,
@@ -100,6 +113,7 @@ export function RulePicker({
   onChange: (rules: IndicatorRule[]) => void;
 }) {
   const theme = useTheme();
+  const isDark = useColorScheme() === 'dark';
 
   const isOn = (opt: RuleOption) => rules.some((r) => ruleKey(r) === ruleKey(opt));
 
@@ -125,7 +139,10 @@ export function RulePicker({
           {rules.map((r) => (
             <View key={ruleKey(r)} style={[styles.selectedItem, { backgroundColor: theme.backgroundElement }]}>
               <View style={styles.selectedTop}>
-                <Text style={[styles.selectedLabel, { color: theme.text }]}>{ruleLabel(r)}</Text>
+                <View style={styles.selectedLabelRow}>
+                  <View style={[styles.ruleDot, { backgroundColor: indicatorColor(ruleColorKey(r.kind), isDark) }]} />
+                  <Text style={[styles.selectedLabel, { color: theme.text }]}>{ruleLabel(r)}</Text>
+                </View>
                 <Pressable onPress={() => removeRule(r)} hitSlop={6}>
                   <Text style={[styles.removeBtn, { color: theme.textSecondary }]}>✕</Text>
                 </Pressable>
@@ -168,6 +185,8 @@ const styles = StyleSheet.create({
   selectedBox: { gap: 8 },
   selectedItem: { borderRadius: 8, padding: 10, gap: 4 },
   selectedTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  selectedLabelRow: { flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 },
+  ruleDot: { width: 8, height: 8, borderRadius: 4 },
   selectedLabel: { fontSize: 13, fontWeight: '600' },
   removeBtn: { fontSize: 14, paddingHorizontal: 4 },
   periodTag: { fontSize: 11 },

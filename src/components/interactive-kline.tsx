@@ -52,6 +52,9 @@ interface Props {
   onSelectBar?: (index: number | null) => void;
   /** 主题（取指标色用） */
   isDark?: boolean;
+  /** y 轴数值标签反色（浅色主题下保证对比度 ≥12:1） */
+  labelBg?: string;
+  labelFg?: string;
 }
 
 export function InteractiveKline({
@@ -70,6 +73,8 @@ export function InteractiveKline({
   resetToken,
   onSelectBar,
   isDark = true,
+  labelBg = '#FFFFFF',
+  labelFg = '#000000',
 }: Props) {
   const [visibleCount, setVisibleCount] = useState(defaultVisible);
   const [scrollOffset, setScrollOffset] = useState(0);
@@ -508,13 +513,14 @@ export function InteractiveKline({
               </G>
             ) : null}
 
-            {/* 十字光标：横线 + y 轴数值标签（§3.1③） */}
+            {/* 十字光标：横线 + y 轴数值标签（§3.1③）
+                底色/文字用反色方案（labelBg/labelFg），两主题对比度均 ≥12:1 */}
             {crossActive ? (
               <G>
                 <Line x1={0} y1={crossY!} x2={width - PAD_RIGHT} y2={crossY!}
                   stroke="#FFFFFF" strokeWidth={1} strokeDasharray="3,3" opacity={0.9} />
-                <Rect x={width - PAD_RIGHT} y={crossY! - 10} width={PAD_RIGHT} height={20} rx={4} fill={axisColor} />
-                <SvgText x={width - PAD_RIGHT / 2} y={crossY! + 4} fill="#000000" fontSize={10}
+                <Rect x={width - PAD_RIGHT} y={crossY! - 10} width={PAD_RIGHT} height={20} rx={4} fill={labelBg} />
+                <SvgText x={width - PAD_RIGHT / 2} y={crossY! + 4} fill={labelFg} fontSize={10}
                   textAnchor="middle" fontWeight="700">
                   {fmtPrice(yToPrice(crossY!))}
                 </SvgText>

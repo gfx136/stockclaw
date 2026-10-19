@@ -462,6 +462,8 @@ export default function StockDetailScreen() {
               onSelectBar={setSelIdx}
               defaultVisible={defaultBars}
               isDark={isDark}
+              labelBg={isDark ? '#FFFFFF' : theme.text}
+              labelFg={isDark ? '#000000' : theme.background}
               gridColor={theme.border}
               axisColor={theme.textSecondary}
               textColor={theme.text}
