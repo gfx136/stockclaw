@@ -34,11 +34,12 @@ function deviceCodeToBytes(code) {
 function main() {
   const [, , deviceCode, monthsArg] = process.argv;
   if (!deviceCode || !monthsArg) {
-    console.error('用法: node tools/sign-license.js <设备码> <月数>');
+    console.error('用法: node tools/sign-license.js <设备码> <月数|permanent>');
     process.exit(1);
   }
-  const months = parseInt(monthsArg, 10);
-  if (!(months > 0 && months <= 120)) throw new Error('月数不合法');
+  // permanent = 永久（800 月 ≈ 66 年；受激活码里 4 字节时间戳上限约束，这是安全上限）
+  const months = monthsArg === 'permanent' ? 800 : parseInt(monthsArg, 10);
+  if (!(months > 0 && months <= 800)) throw new Error('月数不合法（1-800，或 permanent）');
 
   const priv = readPrivateKey();
   const codeBytes = deviceCodeToBytes(deviceCode.toUpperCase());
