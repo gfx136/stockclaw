@@ -3,7 +3,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
-import { semanticColor } from '@/constants/theme';
+import { PeriodColors, semanticColor } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useTheme } from '@/hooks/use-theme';
 import { clearAllKlines, deleteByPeriod, dbStats, lastUpdateAt, perPeriodStats, type PeriodStat } from '@/lib/kline-db';
@@ -22,13 +22,8 @@ const PERIOD_LABEL: Record<KlinePeriod, string> = {
   monthly: '月线',
 };
 
-/** 周期固定色标（§6.3：便于与图表周期切换对照） */
-const PERIOD_COLOR: Record<KlinePeriod, string> = {
-  '60min': '#4DA3F5',
-  daily: '#26A69A',
-  weekly: '#FFB300',
-  monthly: '#E91E63',
-};
+/** 周期固定色标（§6.3：便于与图表周期切换对照），取自全局 PeriodColors */
+const PERIOD_COLOR = PeriodColors;
 
 function fmtBytes(b: number): string {
   if (b <= 0) return '0 B';

@@ -4,6 +4,8 @@ import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Switch, Te
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
+import { semanticColor } from '@/constants/theme';
+import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useTheme } from '@/hooks/use-theme';
 import { fetchAllStocks } from '@/lib/api/failover';
 import {
@@ -54,6 +56,7 @@ interface Stats {
  */
 export default function SettingsScreen() {
   const theme = useTheme();
+  const isDark = useColorScheme() === 'dark';
   const router = useRouter();
   const [stats, setStats] = useState<Stats | null>(null);
   const [downloadedCount, setDownloadedCount] = useState(0);
@@ -200,7 +203,7 @@ export default function SettingsScreen() {
               {speedResults.map((r) => (
                 <View key={r.id} style={styles.speedRow}>
                   <Text style={[styles.speedName, { color: theme.text }]}>{r.name}</Text>
-                  <Text style={[styles.speedVal, { color: r.ok ? '#26A69A' : '#FF5252' }]}>
+                  <Text style={[styles.speedVal, { color: r.ok ? semanticColor('success', isDark) : semanticColor('danger', isDark) }]}>
                     {r.ok ? `${r.latencyMs}ms` : '不可用'} · 成功率 {r.successRate}%
                   </Text>
                   {r.ok ? (

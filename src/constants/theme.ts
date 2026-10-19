@@ -45,6 +45,17 @@ export function semanticColor(kind: 'success' | 'warning' | 'danger', isDark: bo
   return isDark ? SemanticColors.dark[kind] : SemanticColors.light[kind];
 }
 
+/**
+ * K 线周期固定色标（补充规格 §6.3）：便于本地数据管理与图表周期切换对照。
+ * 全 App 唯一来源。
+ */
+export const PeriodColors = {
+  '60min': '#4DA3F5',
+  daily: '#26A69A',
+  weekly: '#FFB300',
+  monthly: '#E91E63',
+} as const;
+
 export const Fonts = Platform.select({
   ios: {
     /** iOS `UIFontDescriptorSystemDesignDefault` */

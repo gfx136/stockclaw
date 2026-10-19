@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { useTheme } from '@/hooks/use-theme';
+import { semanticColor } from '@/constants/theme';
 import { fmtPrice } from '@/lib/format';
 import { indicatorColor } from '@/lib/indicator-palette';
 import type { IndicatorSeries, KlineBar, KlinePeriod } from '@/types/stock';
@@ -175,7 +176,9 @@ export function FullIndicatorSheet({
                 <View key={r.label} style={styles.ruleRow}>
                   <Text style={[styles.rowK, { color: theme.textSecondary, flex: 1 }]} numberOfLines={1}>{r.label}</Text>
                   <Text style={[styles.ruleStatus, {
-                    color: r.status === 'ok' ? '#26A69A' : r.status === 'no' ? theme.textSecondary : '#FFB300',
+                    color: r.status === 'ok' ? semanticColor('success', isDark)
+                      : r.status === 'no' ? theme.textSecondary
+                      : semanticColor('warning', isDark),
                   }]}>
                     {r.status === 'ok' ? '✅ 满足' : r.status === 'no' ? '❌ 不满足' : `⚠ 数据不足 · 需 ${r.needBars ?? '?'} 根`}
                   </Text>
