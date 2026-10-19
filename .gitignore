@@ -42,3 +42,4 @@ example
 /ios
 /android
 .license-private-key.txt
+*.ipa
