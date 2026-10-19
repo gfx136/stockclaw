@@ -7,6 +7,7 @@ import { StockTile } from '@/components/stock-tile';
 import { ThemedText } from '@/components/themed-text';
 import { useTheme } from '@/hooks/use-theme';
 import { loadFavorites, toggleFavorite } from '@/lib/favorites';
+import { setDetailList } from '@/lib/detail-nav';
 import { getFilterState, setFilterOutput, subscribeFilter } from '@/lib/filter-store';
 import type { Stock } from '@/types/stock';
 
@@ -108,9 +109,10 @@ export default function ResultsScreen() {
                   <StockTile
                     stock={item.stock}
                     isFav={favSet.has(item.stock.code)}
-                    onPress={(s) =>
-                      router.push(`/stock/${s.code}?name=${encodeURIComponent(s.name)}`)
-                    }
+                    onPress={(s) => {
+                      setDetailList(filtered.map((x) => ({ code: x.stock.code, name: x.stock.name })));
+                      router.push(`/stock/${s.code}?name=${encodeURIComponent(s.name)}`);
+                    }}
                     onToggleFav={handleToggleFav}
                   />
                   {item.hits.length > 0 ? (

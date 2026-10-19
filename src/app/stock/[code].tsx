@@ -1,7 +1,10 @@
 import { Stack, useLocalSearchParams } from 'expo-router';
+import * as Haptics from 'expo-haptics';
+import * as ScreenOrientation from 'expo-screen-orientation';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
+  Modal,
   Pressable,
   ScrollView,
   Share,
@@ -11,44 +14,54 @@ import {
   View,
 } from 'react-native';
 
-import { IndicatorBar, MALegend } from '@/components/candle-chart';
-import { InteractiveKline } from '@/components/interactive-kline';
+import { IndicatorOverview } from '@/components/indicator-overview';
+import { InteractiveKline, type SubMode } from '@/components/interactive-kline';
 import { ThemedText } from '@/components/themed-text';
 import { useTheme } from '@/hooks/use-theme';
 import { fetchQuote } from '@/lib/api/failover';
+import { neighborCode, getDetailName } from '@/lib/detail-nav';
 import { isFavorite, toggleFavorite } from '@/lib/favorites';
 import {
   fmtChange,
-  fmtMoney,
-  fmtPE,
   fmtPercent,
   fmtPrice,
-  fmtTurnover,
-  fmtVolume,
   marketName,
-  QuoteColors,
   upDownColor,
 } from '@/lib/format';
-import { calcAllIndicators, snapshotAt } from '@/lib/indicators';
+import { calcAllIndicators, snapshotAt, nthLast } from '@/lib/indicators';
 import { downloadAllPeriods } from '@/lib/kline-downloader';
 import { loadKlines } from '@/lib/kline-db';
+import {
+  getDetailLandscape,
+  getShowBbi,
+  getShowBoll,
+  setDetailLandscape,
+  setShowBbi,
+  setShowBoll,
+} from '@/lib/prefs';
 import type { IndicatorSeries, KlineBar, KlinePeriod, Stock } from '@/types/stock';
+
+/**
+ * 个股详情页（补充规格 §2）。
+ * 6 区块：顶栏(返回/上下只/星标/分享) → 标题区(名称+代码+价格常显) → 选项行(周期/指标/复位/横竖屏/星标)
+ * → 图表区(K线主图+副图) → 指标速览(6卡) → 数据状态条。
+ */
 
 const PERIODS: { key: KlinePeriod; label: string }[] = [
   { key: '60min', label: '60分钟' },
-  { key: 'daily', label: '日线' },
-  { key: 'weekly', label: '周线' },
-  { key: 'monthly', label: '月线' },
+  { key: 'daily', label: '日' },
+  { key: 'weekly', label: '周' },
+  { key: 'monthly', label: '月' },
 ];
-
-/** 下载拉取的 K 线根数（足够缩放浏览历史） */
 const BAR_COUNT = 500;
 
 export default function StockDetailScreen() {
-  const { code, name } = useLocalSearchParams<{ code: string; name?: string }>();
+  const params = useLocalSearchParams<{ code: string; name?: string }>();
   const theme = useTheme();
   const { width: winW, height: winH } = useWindowDimensions();
 
+  const [code, setCode] = useState(params.code ?? '');
+  const [name, setName] = useState(params.name ? decodeURIComponent(params.name) : '');
   const [quote, setQuote] = useState<Partial<Stock> | null>(null);
   const [period, setPeriod] = useState<KlinePeriod>('daily');
   const [bars, setBars] = useState<KlineBar[]>([]);
@@ -57,19 +70,43 @@ export default function StockDetailScreen() {
   const [downloading, setDownloading] = useState(false);
   const [fav, setFav] = useState(false);
   const [tip, setTip] = useState<string | null>(null);
-  // 叠加指标（指标管理）
-  const [maOverlay, setMaOverlay] = useState<number[]>([5, 10, 20]);
-  const [showBoll, setShowBoll] = useState(false);
-  const [showBbi, setShowBbi] = useState(false);
-  const [showIndMgr, setShowIndMgr] = useState(false);
+  const [showBoll, setShowBollState] = useState(false);
+  const [showBbi, setShowBbiState] = useState(true);
+  const [subMode, setSubMode] = useState<SubMode>('macd');
+  const [indOpen, setIndOpen] = useState(false);
+  const [resetToken, setResetToken] = useState(0);
+  const [selIdx, setSelIdx] = useState<number | null>(null);
+  const [landscape, setLandscape] = useState(false);
 
-  const stockName = name ? decodeURIComponent(name) : (code ?? '');
+  const stockName = name || getDetailName(code) || code;
 
-  /** K线占屏幕大部分：宽度全屏，高度约一半 */
-  const chartW = winW - 16 * 2;
-  const chartH = Math.min(Math.round(winH * 0.5), 460);
+  // 载入偏好
+  useEffect(() => {
+    (async () => {
+      setShowBollState(await getShowBoll());
+      setShowBbiState(await getShowBbi());
+      const land = await getDetailLandscape();
+      setLandscape(land);
+    })();
+  }, []);
 
-  // 实时行情 + 收藏状态
+  // 横竖屏切换
+  useEffect(() => {
+    (async () => {
+      await ScreenOrientation.lockAsync(
+        landscape ? ScreenOrientation.OrientationLock.LANDSCAPE : ScreenOrientation.OrientationLock.PORTRAIT_UP
+      ).catch(() => {});
+    })();
+  }, [landscape]);
+
+  // 离开详情页恢复竖屏
+  useEffect(() => {
+    return () => {
+      ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => {});
+    };
+  }, []);
+
+  // 加载行情 + 收藏（随 code 变化）
   useEffect(() => {
     if (!code) return;
     (async () => {
@@ -77,36 +114,28 @@ export default function StockDetailScreen() {
       try {
         const q = await fetchQuote(code);
         if (q && Object.keys(q).length > 0) setQuote(q);
-      } catch {
-        /* 行情失败不阻塞 K 线 */
-      }
+      } catch { /* 行情失败不阻塞 K 线 */ }
     })();
   }, [code]);
 
-  // 读取本地 K 线并计算指标
-  const loadBars = useCallback(
-    async (p: KlinePeriod) => {
-      if (!code) return;
-      setLoading(true);
-      try {
-        const rows = await loadKlines(code, p, BAR_COUNT);
-        setBars(rows);
-        setSeries(rows.length >= 30 ? calcAllIndicators(rows) : null);
-      } catch {
-        setBars([]);
-        setSeries(null);
-      } finally {
-        setLoading(false);
-      }
-    },
-    [code]
-  );
+  // 读本地 K 线（随 code/period 变化）
+  const loadBars = useCallback(async (c: string, p: KlinePeriod) => {
+    if (!c) return;
+    setLoading(true);
+    try {
+      const rows = await loadKlines(c, p, BAR_COUNT);
+      setBars(rows);
+      setSeries(rows.length >= 30 ? calcAllIndicators(rows, [5, 10, 20, 26, 60]) : null);
+    } catch {
+      setBars([]);
+      setSeries(null);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+  useEffect(() => { loadBars(code, period); }, [code, period, loadBars]);
 
-  useEffect(() => {
-    loadBars(period);
-  }, [period, loadBars]);
-
-  /** 下载 K 线（含 60分钟/日/周/月四周期），逐个周期显示结果 */
+  // 下载
   const onDownload = useCallback(async () => {
     if (!code) return;
     setDownloading(true);
@@ -115,19 +144,11 @@ export default function StockDetailScreen() {
       const results = await downloadAllPeriods(code, BAR_COUNT);
       const okCount = results.filter((r) => r.ok).length;
       if (okCount === 0) {
-        // 把所有失败原因都列出来，便于定位
-        const errs = results
-          .filter((r) => !r.ok)
-          .map((r) => `${r.period}: ${r.error ?? '未知'}`)
-          .join('；');
+        const errs = results.filter((r) => !r.ok).map((r) => `${r.period}:${r.error ?? '未知'}`).join('；');
         setTip(`下载失败。${errs}`);
-      } else if (okCount < results.length) {
-        const failed = results.filter((r) => !r.ok).map((r) => r.period).join('/');
-        setTip(`部分成功 ${okCount}/${results.length}（失败：${failed}）`);
-        await loadBars(period);
       } else {
-        setTip(`已更新 ${results.length} 个周期`);
-        await loadBars(period);
+        setTip(`已更新 ${okCount}/${results.length} 个周期`);
+        await loadBars(code, period);
       }
     } catch (e) {
       setTip(e instanceof Error ? e.message : '下载异常');
@@ -139,264 +160,278 @@ export default function StockDetailScreen() {
   const handleToggleFav = useCallback(async () => {
     if (!code) return;
     setFav(await toggleFavorite(code, stockName));
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
   }, [code, stockName]);
 
-  /** 系统分享（纯文本卡片） */
+  // 切换股票（上一只/下一只，循环，保留周期/指标/根数）
+  const goNeighbor = useCallback((dir: 1 | -1) => {
+    const next = neighborCode(code, dir);
+    if (!next) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setCode(next);
+    setName(getDetailName(next));
+    setQuote(null);
+    setBars([]);
+    setSeries(null);
+    setSelIdx(null);
+  }, [code]);
+
   const onShare = useCallback(async () => {
-    const text = `${stockName}(${code}) 最新价 ${fmtPrice(quote?.price)} 涨跌幅 ${fmtPercent(quote?.changePercent)} —— StockClaw`;
     try {
-      await Share.share({ message: text });
-    } catch {
-      /* 用户取消不处理 */
-    }
+      await Share.share({
+        message: `${stockName} ${code} 最新价 ${fmtPrice(quote?.price)} 涨跌幅 ${fmtPercent(quote?.changePercent)} —— 选股助手`,
+      });
+    } catch { /* 用户取消 */ }
   }, [stockName, code, quote]);
 
-  const snapshot = useMemo(
-    () => (series && bars.length > 0 ? snapshotAt(series, bars) : null),
-    [series, bars]
-  );
+  const toggleLandscape = useCallback(() => {
+    const next = !landscape;
+    setLandscape(next);
+    setDetailLandscape(next);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+  }, [landscape]);
+
+  const snapshot = useMemo(() => (series && bars.length > 0 ? snapshotAt(series, bars) : null), [series, bars]);
+
+  // 选中 bar 的速览联动（规格 §2.6）：选中时显示该 bar 的指标
+  const selSnapshot = useMemo(() => {
+    if (selIdx === null || !series || selIdx < 0 || selIdx >= bars.length) return null;
+    const sub = bars.slice(0, selIdx + 1);
+    const subSeries = calcAllIndicators(sub, [5, 10, 20, 26, 60]);
+    return snapshotAt(subSeries, sub);
+  }, [selIdx, series, bars]);
+  const displaySnapshot = selSnapshot ?? snapshot;
+
+  // MACD 金叉/死叉（最新两根）
+  const macdCross = useMemo(() => {
+    if (!series) return null;
+    const d0 = nthLast(series.macd.dif, 0), e0 = nthLast(series.macd.dea, 0);
+    const d1 = nthLast(series.macd.dif, 1), e1 = nthLast(series.macd.dea, 1);
+    if (d0 === undefined || e0 === undefined || d1 === undefined || e1 === undefined) return null;
+    if (d1 <= e1 && d0 > e0) return 'golden';
+    if (d1 >= e1 && d0 < e0) return 'dead';
+    return null;
+  }, [series]);
 
   const changeColor = upDownColor(quote?.changePercent);
-  const latest = bars.length > 0 ? bars[bars.length - 1] : null;
+  const hasPrice = (quote?.price ?? 0) > 0;
+  const chartW = winW - 16 * 2;
+  // 屏占比（规格 §2.3）：竖屏图表区约 330pt；横屏约 180pt
+  const chartH = landscape ? Math.round(Math.min(winH * 0.55, 220)) : Math.round(Math.min(winH * 0.42, 340));
 
   return (
     <View style={[styles.container, { backgroundColor: theme.background }]}>
       <Stack.Screen
         options={{
-          title: stockName || '个股详情',
+          title: '',
+          headerBackTitle: '返回',
           headerRight: () => (
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 16 }}>
-              <Pressable onPress={onShare} hitSlop={10}>
-                <Text style={{ fontSize: 18, color: theme.text }}>⤴</Text>
+            <View style={styles.headerRight}>
+              <Pressable onPress={() => goNeighbor(-1)} hitSlop={10} accessibilityLabel="上一只">
+                <Text style={[styles.headerBtn, { color: theme.text }]}>◀</Text>
               </Pressable>
-              <Pressable onPress={handleToggleFav} hitSlop={10}>
-                <Text style={{ fontSize: 20, color: fav ? theme.tint : theme.text }}>
-                  {fav ? '★' : '☆'}
-                </Text>
+              <Pressable onPress={() => goNeighbor(1)} hitSlop={10} accessibilityLabel="下一只">
+                <Text style={[styles.headerBtn, { color: theme.text }]}>▶</Text>
+              </Pressable>
+              <Pressable onPress={handleToggleFav} hitSlop={10} accessibilityLabel="自选">
+                <Text style={[styles.headerBtn, { color: fav ? theme.tint : theme.text }]}>{fav ? '★' : '☆'}</Text>
+              </Pressable>
+              <Pressable onPress={onShare} hitSlop={10} accessibilityLabel="分享">
+                <Text style={[styles.headerBtn, { color: theme.text }]}>⤴</Text>
               </Pressable>
             </View>
           ),
         }}
       />
 
-      {/* 顶部紧凑行情行 */}
-      <View style={styles.quoteBar}>
-        <Text style={[styles.price, { color: changeColor }]}>{fmtPrice(quote?.price)}</Text>
-        <Text style={[styles.change, { color: changeColor }]}>
-          {fmtChange(quote?.changeAmount)}  {fmtPercent(quote?.changePercent)}
-        </Text>
-        <Text style={[styles.codeMeta, { color: theme.textSecondary }]}>
-          {code} · {marketName(code ?? '')}
-        </Text>
-      </View>
-
-      {/* 周期切换 + 下载 */}
-      <View style={styles.periodRow}>
-        {PERIODS.map((p) => (
-          <Pressable
-            key={p.key}
-            onPress={() => setPeriod(p.key)}
-            style={[
-              styles.periodBtn,
-              { backgroundColor: period === p.key ? theme.text : theme.backgroundElement },
-            ]}>
-            <Text
-              style={[styles.periodText, { color: period === p.key ? theme.background : theme.text }]}>
-              {p.label}
+      <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent}>
+        {/* ② 标题区：名称 + 代码 + 最新价 + 涨跌额幅（常显） */}
+        <View style={[styles.titleBlock, landscape && styles.titleBlockLand]}>
+          <View style={styles.titleLeft}>
+            <Text style={[styles.stockName, { color: theme.text }]} numberOfLines={1}>{stockName}</Text>
+            <Text style={[styles.stockCode, { color: theme.textSecondary }]} numberOfLines={1}>
+              {code} · {marketName(code)}
             </Text>
-          </Pressable>
-        ))}
-        <Pressable onPress={onDownload} disabled={downloading} hitSlop={6}>
-          <View style={[styles.dlBtn, { backgroundColor: theme.backgroundElement, opacity: downloading ? 0.6 : 1 }]}>
-            {downloading ? (
-              <ActivityIndicator size="small" />
-            ) : (
-              <Text style={[styles.dlText, { color: theme.tint }]}>下载</Text>
-            )}
           </View>
-        </Pressable>
-      </View>
-
-      {tip ? (
-        <View style={[styles.tipBox, { backgroundColor: theme.backgroundElement }]}>
-          <ThemedText type="small" themeColor="textSecondary">{tip}</ThemedText>
-        </View>
-      ) : null}
-
-      {/* 指标管理入口（K线右上） */}
-      <View style={styles.indMgrRow}>
-        <Pressable onPress={() => setShowIndMgr((v) => !v)} hitSlop={6}>
-          <Text style={[styles.indMgrBtn, { color: theme.tint }]}>
-            指标 {showIndMgr ? '▲' : '▼'}
+          <Text style={[styles.bigPrice, { color: hasPrice ? changeColor : theme.textSecondary }]}>
+            {hasPrice ? fmtPrice(quote?.price) : '--'}
           </Text>
-        </Pressable>
-      </View>
-      {showIndMgr ? (
-        <View style={[styles.indMgrPanel, { backgroundColor: theme.backgroundElement }]}>
-          <Text style={[styles.indMgrLabel, { color: theme.textSecondary }]}>均线</Text>
-          <View style={styles.indChips}>
-            {[5, 10, 20, 60].map((p) => {
-              const on = maOverlay.includes(p);
+          <View style={styles.titleRight}>
+            <Text style={[styles.changeAmt, { color: changeColor }]}>{fmtChange(quote?.changeAmount)}</Text>
+            <Text style={[styles.changePct, { color: changeColor }]}>{fmtPercent(quote?.changePercent)}</Text>
+          </View>
+        </View>
+
+        {/* ③ 选项行：周期 / 指标 / 复位 / 横竖屏 / 星标 */}
+        <View style={styles.optionBar}>
+          <View style={styles.periodSeg}>
+            {PERIODS.map((p) => {
+              const on = p.key === period;
               return (
-                <Pressable
-                  key={p}
-                  onPress={() =>
-                    setMaOverlay((prev) => (on ? prev.filter((x) => x !== p) : [...prev, p].sort((a, b) => a - b)))
-                  }>
-                  <View style={[styles.indChip, { backgroundColor: on ? theme.tint : theme.background }]}>
-                    <Text style={[styles.indChipText, { color: on ? '#fff' : theme.text }]}>MA{p}</Text>
+                <Pressable key={p.key} onPress={() => { setPeriod(p.key); Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); }}>
+                  <View style={[styles.periodBtn, { backgroundColor: on ? theme.tint : 'transparent' }]}>
+                    <Text style={[styles.periodText, { color: on ? '#fff' : theme.text }]}>{p.label}</Text>
                   </View>
                 </Pressable>
               );
             })}
-            <Pressable onPress={() => setShowBoll((v) => !v)}>
-              <View style={[styles.indChip, { backgroundColor: showBoll ? theme.tint : theme.background }]}>
-                <Text style={[styles.indChipText, { color: showBoll ? '#fff' : theme.text }]}>BOLL</Text>
-              </View>
-            </Pressable>
-            <Pressable onPress={() => setShowBbi((v) => !v)}>
-              <View style={[styles.indChip, { backgroundColor: showBbi ? theme.tint : theme.background }]}>
-                <Text style={[styles.indChipText, { color: showBbi ? '#fff' : theme.text }]}>BBI</Text>
-              </View>
-            </Pressable>
           </View>
+          <Pressable onPress={() => setIndOpen(true)} hitSlop={6}>
+            <Text style={[styles.optBtn, { color: theme.tint }]}>指标 ▾</Text>
+          </Pressable>
+          <Pressable onPress={() => { setResetToken((t) => t + 1); Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); }} hitSlop={6}>
+            <Text style={[styles.optBtn, { color: theme.text }]}>复位</Text>
+          </Pressable>
+          <Pressable onPress={toggleLandscape} hitSlop={6}>
+            <Text style={[styles.optBtn, { color: theme.text }]}>{landscape ? '竖屏' : '横屏'}</Text>
+          </Pressable>
+          <Pressable onPress={onDownload} disabled={downloading} hitSlop={6}>
+            {downloading ? <ActivityIndicator size="small" /> : <Text style={[styles.optBtn, { color: theme.tint }]}>下载</Text>}
+          </Pressable>
         </View>
-      ) : null}
 
-      {/* K线大屏：占屏幕约一半 */}
-      <View style={[styles.chartCard, { backgroundColor: theme.backgroundElement }]}>
-        {loading && bars.length === 0 ? (
-          <View style={[styles.chartLoading, { height: chartH }]}>
-            <ActivityIndicator />
-          </View>
-        ) : bars.length === 0 ? (
-          <View style={[styles.chartLoading, { height: chartH }]}>
-            <ThemedText type="small" themeColor="textSecondary" style={styles.noData}>
-              本地暂无 {PERIODS.find((p) => p.key === period)?.label} 数据
-            </ThemedText>
-            <Pressable onPress={onDownload} disabled={downloading}>
-              <Text style={[styles.dlHint, { color: theme.tint }]}>
-                {downloading ? '下载中…' : '点上方「下载」拉取 K 线'}
-              </Text>
-            </Pressable>
-          </View>
-        ) : (
-          <InteractiveKline
-            bars={bars}
-            width={chartW}
-            height={chartH}
-            series={series ?? undefined}
-            maOverlay={maOverlay}
-            showBoll={showBoll}
-            showBbi={showBbi}
-            defaultVisible={100}
-            gridColor={theme.border}
-            axisColor={theme.textSecondary}
-            textColor={theme.text}
-          />
-        )}
-      </View>
+        {/* 指标工具提示条（图区左上小字） */}
+        <Text style={[styles.indHint, { color: theme.textSecondary }]}>
+          MA5/10/20/60{showBoll ? ' · BOLL' : ''}{showBbi ? ' · BBI' : ''} · 副图 {subMode.toUpperCase()}
+        </Text>
 
-      {/* 均线图例 */}
-      {series ? <MALegend periods={[5, 10, 20, 60]} series={series} /> : null}
-
-      {/* 下方明细可滚动 */}
-      <ScrollView style={styles.detailScroll} contentContainerStyle={styles.detailContent}>
-        {snapshot ? (
-          <View style={[styles.card, { backgroundColor: theme.backgroundElement }]}>
-            <ThemedText type="smallBold">技术指标</ThemedText>
-            <View style={styles.indGrid}>
-              <IndicatorBar label="MACD DIF" value={fmtPrice(snapshot.dif)} color={upDownColor(snapshot.dif)} />
-              <IndicatorBar label="MACD DEA" value={fmtPrice(snapshot.dea)} color={upDownColor(snapshot.dea)} />
-              <IndicatorBar label="MACD 柱" value={fmtPrice(snapshot.macdHist)} color={upDownColor(snapshot.macdHist)} />
-              <IndicatorBar label="KDJ K" value={fmtPrice(snapshot.k)} />
-              <IndicatorBar label="KDJ D" value={fmtPrice(snapshot.d)} />
-              <IndicatorBar label="KDJ J" value={fmtPrice(snapshot.j)} />
-              <IndicatorBar label="RSI6" value={fmtPrice(snapshot.rsi6)} />
-              <IndicatorBar label="RSI14" value={fmtPrice(snapshot.rsi14)} />
-              <IndicatorBar label="BBI" value={fmtPrice(snapshot.bbi)} />
-              <IndicatorBar label="布林中轨" value={fmtPrice(snapshot.bollMid)} />
-              <IndicatorBar label="布林上轨" value={fmtPrice(snapshot.bollUpper)} />
-              <IndicatorBar label="布林下轨" value={fmtPrice(snapshot.bollLower)} />
-            </View>
+        {tip ? (
+          <View style={[styles.tipBox, { backgroundColor: theme.backgroundElement }]}>
+            <ThemedText type="small" themeColor="textSecondary">{tip}</ThemedText>
           </View>
         ) : null}
 
-        <View style={[styles.card, { backgroundColor: theme.backgroundElement }]}>
-          <ThemedText type="smallBold">行情数据</ThemedText>
-          <View style={styles.indGrid}>
-            <IndicatorBar label="今开" value={fmtPrice(quote?.open)} />
-            <IndicatorBar label="最高" value={fmtPrice(quote?.high)} color={theme.tint} />
-            <IndicatorBar label="最低" value={fmtPrice(quote?.low)} color={theme.tint} />
-            <IndicatorBar label="昨收" value={fmtPrice(quote?.prevClose)} />
-            <IndicatorBar label="成交量" value={fmtVolume(quote?.volume)} />
-            <IndicatorBar label="成交额" value={fmtMoney(quote?.amount)} />
-            <IndicatorBar label="振幅" value={fmtPercent(quote?.amplitude)} />
-            <IndicatorBar label="量比" value={fmtPrice(quote?.volumeRatio)} />
-            <IndicatorBar label="换手率" value={fmtTurnover(quote?.turnover)} />
-            <IndicatorBar label="市盈率" value={fmtPE(quote?.pe)} />
-            <IndicatorBar label="市净率" value={fmtPrice(quote?.pb)} />
-            <IndicatorBar label="总市值" value={fmtMoney(quote?.marketCap)} />
-            <IndicatorBar label="流通市值" value={fmtMoney(quote?.floatCap)} />
-            <IndicatorBar label="涨停价" value={fmtPrice(quote?.limitUp)} color={QuoteColors.up} />
-            <IndicatorBar label="跌停价" value={fmtPrice(quote?.limitDown)} color={QuoteColors.down} />
-            {latest ? (
-              <IndicatorBar
-                label="最新收盘"
-                value={`${fmtPrice(latest.close)}  ${latest.date}`}
-                color={upDownColor(latest.changePercent)}
-              />
-            ) : null}
-          </View>
+        {/* ④ 图表区 */}
+        <View style={[styles.chartCard, { backgroundColor: theme.backgroundElement }]}>
+          {loading && bars.length === 0 ? (
+            <View style={[styles.chartLoading, { height: chartH }]}><ActivityIndicator /></View>
+          ) : bars.length === 0 ? (
+            <View style={[styles.chartLoading, { height: chartH }]}>
+              <ThemedText type="small" themeColor="textSecondary" style={styles.noData}>尚未下载 · 点击开始下载</ThemedText>
+              <Pressable onPress={onDownload} disabled={downloading}>
+                <Text style={[styles.dlHint, { color: theme.tint }]}>{downloading ? '下载中…' : '点击下载 K 线'}</Text>
+              </Pressable>
+            </View>
+          ) : (
+            <InteractiveKline
+              bars={bars}
+              width={chartW}
+              height={chartH}
+              series={series ?? undefined}
+              maOverlay={[5, 10, 20, 60]}
+              showBoll={showBoll}
+              showBbi={showBbi}
+              subMode={subMode}
+              resetToken={resetToken}
+              onSelectBar={setSelIdx}
+              defaultVisible={100}
+              gridColor={theme.border}
+              axisColor={theme.textSecondary}
+              textColor={theme.text}
+            />
+          )}
         </View>
 
-        <ThemedText type="code" themeColor="textSecondary" style={styles.footer}>
-          数据来源：东方财富 / 腾讯 / 新浪 · 仅供个人研究，不构成投资建议
-        </ThemedText>
+        {/* ⑤ 指标速览（与图表同源联动） */}
+        {displaySnapshot ? (
+          <View style={styles.overviewWrap}>
+            <ThemedText type="smallBold" style={styles.overviewTitle}>
+              指标速览{selIdx !== null && bars[selIdx] ? ` · ${bars[selIdx].date}` : ''}
+            </ThemedText>
+            <IndicatorOverview
+              snapshot={displaySnapshot}
+              latestClose={selIdx !== null && bars[selIdx] ? bars[selIdx].close : (bars[bars.length - 1]?.close ?? 0)}
+              macdCross={macdCross}
+              enabled={{ ma: true, boll: showBoll, macd: subMode === 'macd', kdj: subMode === 'kdj', rsi: subMode === 'rsi', bbi: showBbi }}
+              onOpenIndicators={() => setIndOpen(true)}
+            />
+          </View>
+        ) : null}
+
+        {/* ⑥ 数据状态条 */}
+        <View style={styles.statusBar}>
+          <ThemedText type="code" themeColor="textSecondary" style={styles.statusText}>
+            {bars.length > 0 ? `数据截至 ${bars[bars.length - 1].date} · ${bars.length} 根` : '本地无数据'} · 数据源自动
+          </ThemedText>
+        </View>
       </ScrollView>
+
+      {/* 指标开关浮层（主图叠加 + 副图选择） */}
+      <Modal visible={indOpen} transparent animationType="fade" onRequestClose={() => setIndOpen(false)}>
+        <Pressable style={styles.indMask} onPress={() => setIndOpen(false)}>
+          <View style={[styles.indPanel, { backgroundColor: theme.backgroundElement }]}>
+            <Text style={[styles.indPanelTitle, { color: theme.text }]}>主图叠加</Text>
+            <View style={styles.indRow}>
+              <Pressable onPress={() => { const v = !showBoll; setShowBollState(v); setShowBoll(v); }}>
+                <View style={[styles.indChip, { backgroundColor: showBoll ? theme.tint : theme.background }]}>
+                  <Text style={[styles.indChipText, { color: showBoll ? '#fff' : theme.text }]}>BOLL</Text>
+                </View>
+              </Pressable>
+              <Pressable onPress={() => { const v = !showBbi; setShowBbiState(v); setShowBbi(v); }}>
+                <View style={[styles.indChip, { backgroundColor: showBbi ? theme.tint : theme.background }]}>
+                  <Text style={[styles.indChipText, { color: showBbi ? '#fff' : theme.text }]}>BBI</Text>
+                </View>
+              </Pressable>
+            </View>
+            <Text style={[styles.indPanelTitle, { color: theme.text }]}>副图指标</Text>
+            <View style={styles.indRow}>
+              {(['macd', 'kdj', 'rsi', 'volume', 'amount'] as SubMode[]).map((m) => (
+                <Pressable key={m} onPress={() => setSubMode(m)}>
+                  <View style={[styles.indChip, { backgroundColor: subMode === m ? theme.tint : theme.background }]}>
+                    <Text style={[styles.indChipText, { color: subMode === m ? '#fff' : theme.text }]}>
+                      {{ macd: 'MACD', kdj: 'KDJ', rsi: 'RSI', volume: '量', amount: '额' }[m]}
+                    </Text>
+                  </View>
+                </Pressable>
+              ))}
+            </View>
+          </View>
+        </Pressable>
+      </Modal>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  quoteBar: {
-    flexDirection: 'row',
-    alignItems: 'baseline',
-    gap: 12,
-    paddingHorizontal: 16,
-    paddingTop: 8,
-    paddingBottom: 4,
+  headerRight: { flexDirection: 'row', alignItems: 'center', gap: 16 },
+  headerBtn: { fontSize: 18 },
+  scroll: { flex: 1 },
+  scrollContent: { paddingBottom: 24 },
+  titleBlock: {
+    height: 88, flexDirection: 'row', alignItems: 'center',
+    paddingHorizontal: 16, gap: 12,
   },
-  price: { fontSize: 28, fontWeight: '700', fontVariant: ['tabular-nums'] },
-  change: { fontSize: 14, fontWeight: '600', fontVariant: ['tabular-nums'] },
-  codeMeta: { fontSize: 12, marginLeft: 'auto' },
-  periodRow: {
-    flexDirection: 'row',
-    gap: 8,
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 6,
+  titleBlockLand: { height: 56 },
+  titleLeft: { flex: 1, gap: 4 },
+  stockName: { fontSize: 20, fontWeight: '700' },
+  stockCode: { fontSize: 13, fontVariant: ['tabular-nums'] },
+  bigPrice: { fontSize: 26, fontWeight: '700', fontVariant: ['tabular-nums'] },
+  titleRight: { alignItems: 'flex-end', gap: 4 },
+  changeAmt: { fontSize: 13, fontVariant: ['tabular-nums'] },
+  changePct: { fontSize: 13, fontVariant: ['tabular-nums'] },
+  optionBar: {
+    height: 44, flexDirection: 'row', alignItems: 'center',
+    paddingHorizontal: 16, gap: 14,
   },
-  periodBtn: { flex: 1, paddingVertical: 7, borderRadius: 8, alignItems: 'center' },
+  periodSeg: { flexDirection: 'row', gap: 4 },
+  periodBtn: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8 },
   periodText: { fontSize: 13, fontWeight: '600' },
-  dlBtn: { paddingHorizontal: 14, paddingVertical: 7, borderRadius: 8 },
-  dlText: { fontSize: 13, fontWeight: '600' },
+  optBtn: { fontSize: 13, fontWeight: '600' },
+  indHint: { fontSize: 10, paddingHorizontal: 16, paddingBottom: 2 },
   tipBox: { marginHorizontal: 16, marginBottom: 6, padding: 10, borderRadius: 8 },
-  indMgrRow: { flexDirection: 'row', justifyContent: 'flex-end', paddingHorizontal: 16, paddingBottom: 2 },
-  indMgrBtn: { fontSize: 12, fontWeight: '600' },
-  indMgrPanel: { marginHorizontal: 16, marginBottom: 6, borderRadius: 10, padding: 10, gap: 6 },
-  indMgrLabel: { fontSize: 11 },
-  indChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  indChip: { paddingHorizontal: 12, paddingVertical: 5, borderRadius: 8 },
-  indChipText: { fontSize: 12, fontWeight: '600' },
   chartCard: { marginHorizontal: 16, borderRadius: 14, padding: 8, justifyContent: 'center' },
-  chartLoading: { alignItems: 'center', justifyContent: 'center', gap: 6 },
+  chartLoading: { alignItems: 'center', justifyContent: 'center', gap: 8 },
   noData: { textAlign: 'center' },
   dlHint: { fontSize: 13, fontWeight: '600' },
-  detailScroll: { flex: 1 },
-  detailContent: { padding: 16, gap: 12, paddingBottom: 40 },
-  card: { borderRadius: 14, padding: 14, gap: 10 },
-  indGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 14, rowGap: 14 },
-  footer: { textAlign: 'center', fontSize: 10, lineHeight: 16, marginTop: 4 },
+  overviewWrap: { paddingHorizontal: 16, marginTop: 12, gap: 8 },
+  overviewTitle: { fontSize: 13 },
+  statusBar: { height: 28, justifyContent: 'center', alignItems: 'center', marginTop: 8 },
+  statusText: { fontSize: 10 },
+  indMask: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', padding: 24 },
+  indPanel: { borderRadius: 14, padding: 16, gap: 10 },
+  indPanelTitle: { fontSize: 13, fontWeight: '600' },
+  indRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  indChip: { paddingHorizontal: 12, paddingVertical: 7, borderRadius: 8 },
+  indChipText: { fontSize: 13, fontWeight: '600' },
 });

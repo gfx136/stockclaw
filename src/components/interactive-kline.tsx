@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Svg, { G, Line, Path, Rect, Text as SvgText } from 'react-native-svg';
@@ -24,7 +24,7 @@ const PAD_LEFT = 4;
 const PAD_RIGHT = 46;
 const PAD_TOP = 8;
 const GAP = 10;
-const SUB_H = 56;
+const SUB_H = 78;
 
 const MIN_VISIBLE = 15;
 const LINE_MODE_CW = 2;
@@ -37,13 +37,7 @@ const MA_COLORS: Record<number, string> = {
 };
 
 type SubMode = 'volume' | 'amount' | 'macd' | 'kdj' | 'rsi';
-const SUB_MODES: { key: SubMode; label: string }[] = [
-  { key: 'volume', label: '量' },
-  { key: 'amount', label: '额' },
-  { key: 'macd', label: 'MACD' },
-  { key: 'kdj', label: 'KDJ' },
-  { key: 'rsi', label: 'RSI' },
-];
+export type { SubMode };
 
 interface Props {
   bars: KlineBar[];
@@ -57,6 +51,12 @@ interface Props {
   gridColor?: string;
   axisColor?: string;
   textColor?: string;
+  /** 副图模式（受控，由详情页选项行/指标浮层控制） */
+  subMode?: SubMode;
+  /** 复位令牌：值变化时恢复默认根数并右对齐最新（规格 §2.4 复位） */
+  resetToken?: number;
+  /** 长按选中的 bar 索引变化回调（详情页速览联动） */
+  onSelectBar?: (index: number | null) => void;
 }
 
 export function InteractiveKline({
@@ -71,11 +71,31 @@ export function InteractiveKline({
   gridColor = '#3A3D42',
   axisColor = '#8A8F98',
   textColor = '#8A8F98',
+  subMode: controlledSubMode,
+  resetToken,
+  onSelectBar,
 }: Props) {
   const [visibleCount, setVisibleCount] = useState(defaultVisible);
   const [scrollOffset, setScrollOffset] = useState(0);
   const [selected, setSelected] = useState<number | null>(null);
-  const [subMode, setSubMode] = useState<SubMode>('volume');
+  const [internalSub, setInternalSub] = useState<SubMode>('volume');
+  const subMode = controlledSubMode ?? internalSub;
+
+  // 复位令牌：变化时恢复默认根数并右对齐最新（规格 §2.4 复位）
+  const resetRef = useRef(resetToken);
+  useEffect(() => {
+    if (resetRef.current !== resetToken) {
+      resetRef.current = resetToken;
+      setVisibleCount(defaultVisible);
+      setScrollOffset(0);
+      setSelected(null);
+    }
+  }, [resetToken, defaultVisible]);
+
+  // 选中 bar 变化时通知外部（详情页速览联动）
+  useEffect(() => {
+    onSelectBar?.(selected);
+  }, [selected, onSelectBar]);
 
   const total = bars.length;
   const endIdx = Math.max(0, Math.min(total, total - scrollOffset));
@@ -252,12 +272,6 @@ export function InteractiveKline({
     [pinch, pan, tap]
   );
 
-  const reset = () => {
-    setVisibleCount(defaultVisible);
-    setScrollOffset(0);
-    setSelected(null);
-  };
-
   const selBar = selected !== null && selected >= 0 && selected < total ? bars[selected] : null;
 
   const linePath = (arr: (number | undefined)[], yFn: (v: number) => number): string => {
@@ -287,25 +301,6 @@ export function InteractiveKline({
 
   return (
     <View style={{ width }}>
-      <View style={styles.toolbar}>
-        <View style={styles.subSwitch}>
-          {SUB_MODES.map((m) => (
-            <Pressable key={m.key} onPress={() => setSubMode(m.key)} hitSlop={4}>
-              <Text
-                style={[
-                  styles.subBtn,
-                  { color: subMode === m.key ? '#4DA3F5' : axisColor, fontWeight: subMode === m.key ? '700' : '400' },
-                ]}>
-                {m.label}
-              </Text>
-            </Pressable>
-          ))}
-        </View>
-        <Pressable onPress={reset} hitSlop={6}>
-          <Text style={[styles.toolBtn, { color: axisColor }]}>复位</Text>
-        </Pressable>
-      </View>
-
       {selBar ? (
         <View style={styles.selInfo}>
           <Text style={[styles.selDate, { color: textColor }]}>{selBar.date}</Text>

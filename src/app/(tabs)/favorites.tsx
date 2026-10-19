@@ -7,6 +7,7 @@ import { StockTile } from '@/components/stock-tile';
 import { ThemedText } from '@/components/themed-text';
 import { useTheme } from '@/hooks/use-theme';
 import { fetchAllStocks } from '@/lib/api/failover';
+import { setDetailList } from '@/lib/detail-nav';
 import { loadFavorites, removeFavorite, toggleFavorite } from '@/lib/favorites';
 import type { FavoriteItem, Stock } from '@/types/stock';
 
@@ -104,7 +105,10 @@ export default function FavoritesScreen() {
           <StockTile
             stock={item}
             isFav
-            onPress={(s) => router.push(`/stock/${s.code}?name=${encodeURIComponent(s.name)}`)}
+            onPress={(s) => {
+              setDetailList(data.map((x) => ({ code: x.code, name: x.name })));
+              router.push(`/stock/${s.code}?name=${encodeURIComponent(s.name)}`);
+            }}
             onToggleFav={handleToggleFav}
             onLongPress={handleLongPress}
           />

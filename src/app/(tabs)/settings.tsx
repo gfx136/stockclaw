@@ -1,10 +1,21 @@
-import { useFocusEffect } from 'expo-router';
-import { useCallback, useState } from 'react';
+import { useFocusEffect, useRouter } from 'expo-router';
+import { useCallback, useState, useSyncExternalStore } from 'react';
 import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
 import { useTheme } from '@/hooks/use-theme';
+import { fetchAllStocks } from '@/lib/api/failover';
+import {
+  getDownloadedCount,
+  getDownloadState,
+  pauseDownload,
+  resumeDownload,
+  startFullDownload,
+  stopDownload,
+  subscribeDownload,
+} from '@/lib/download-manager';
+import { clearAllKlines, dbStats } from '@/lib/kline-db';
 import {
   getSourceMode,
   listSources,
@@ -13,7 +24,6 @@ import {
   type SourceMode,
   type SpeedTestResult,
 } from '@/lib/api/failover';
-import { clearAllKlines, dbStats } from '@/lib/kline-db';
 import {
   getBackgroundDownload,
   getIncrementalUpdate,
@@ -41,7 +51,10 @@ interface Stats {
  */
 export default function SettingsScreen() {
   const theme = useTheme();
+  const router = useRouter();
   const [stats, setStats] = useState<Stats | null>(null);
+  const [downloadedCount, setDownloadedCount] = useState(0);
+  const dlState = useSyncExternalStore(subscribeDownload, getDownloadState, getDownloadState);
   const [sourceMode, setSourceModeState] = useState<SourceMode>('auto');
   const [localMode, setLocalMode] = useState(true);
   const [incremental, setIncremental] = useState(true);
@@ -68,6 +81,7 @@ export default function SettingsScreen() {
         setBgDownload(await getBackgroundDownload());
         setLanguageState(await getLanguage());
         setThemePrefState(await getThemePref());
+        setDownloadedCount(await getDownloadedCount());
       })();
       return () => {
         active = false;
@@ -75,25 +89,35 @@ export default function SettingsScreen() {
     }, [])
   );
 
-  const onClear = useCallback(() => {
-    Alert.alert('全部清除本地数据', '将删除本地全部 K 线数据；在线模式不受影响，下次更新自动重新下载。确定吗？', [
-      { text: '取消', style: 'cancel' },
-      {
-        text: '清空',
-        style: 'destructive',
-        onPress: async () => {
-          await clearAllKlines();
-          setStats(await dbStats());
-          Alert.alert('已清空', '本地 K 线缓存已删除。');
-        },
-      },
-    ]);
-  }, []);
-
   const onSelectSource = useCallback(async (mode: SourceMode) => {
     await setSourceMode(mode);
     setSourceModeState(mode);
   }, []);
+
+  /** 下载/更新本地 K 线（规格 §4.2） */
+  const onDownloadAll = useCallback(async () => {
+    if (dlState.running) {
+      // 下载中：弹暂停/停止
+      Alert.alert('下载进行中', `已完成 ${dlState.done}/${dlState.total}`, [
+        dlState.paused
+          ? { text: '继续', onPress: () => resumeDownload() }
+          : { text: '暂停', onPress: () => pauseDownload() },
+        { text: '停止', style: 'destructive', onPress: () => stopDownload() },
+        { text: '取消', style: 'cancel' },
+      ]);
+      return;
+    }
+    try {
+      const stocks = await fetchAllStocks(200);
+      if (stocks.length === 0) {
+        Alert.alert('提示', '未取到股票列表，请检查网络。');
+        return;
+      }
+      startFullDownload(stocks); // 后台执行，状态经 subscribeDownload 推送
+    } catch (e) {
+      Alert.alert('启动失败', e instanceof Error ? e.message : '请检查网络');
+    }
+  }, [dlState]);
 
   const onSpeedTest = useCallback(async () => {
     setTesting(true);
@@ -166,14 +190,45 @@ export default function SettingsScreen() {
           ) : null}
         </Section>
 
-        {/* 本地数据管理 */}
-        <Section title="本地 K 线数据" theme={theme}>
-          <Row label="已缓存股票" value={stats ? `${stats.codes} 只` : '读取中…'} theme={theme} />
-          <Row label="K 线总根数" value={stats ? `${stats.totalBars} 根` : '读取中…'} theme={theme} />
-          <Row label="数据库体积" value={stats ? fmtBytes(stats.bytes) : '读取中…'} theme={theme} />
+        {/* 本地化数据 */}
+        <Section title="本地化数据" theme={theme}>
+          {/* 下载/更新本地 K 线数据 */}
+          <Pressable onPress={onDownloadAll}>
+            <View style={styles.row}>
+              <View style={styles.sourceLeft}>
+                <Text style={[styles.rowLabel, { color: theme.text }]}>下载 / 更新本地 K 线数据</Text>
+                <Text style={[styles.sourceDesc, { color: theme.textSecondary }]}>
+                  {dlState.running
+                    ? `正在下载本地 K 线… ${dlState.done}/${dlState.total}${dlState.paused ? '（已暂停）' : ''}`
+                    : downloadedCount > 0
+                      ? `${downloadedCount} 只股票已同步 · 点击增量更新`
+                      : '暂无本地数据 · 点击开始（首次全量约几分钟）'}
+                </Text>
+                {dlState.running ? (
+                  <View style={[styles.progressTrack, { backgroundColor: theme.background }]}>
+                    <View style={[styles.progressFill, { backgroundColor: theme.tint, width: `${dlState.total ? (dlState.done / dlState.total) * 100 : 0}%` }]} />
+                  </View>
+                ) : null}
+              </View>
+              {dlState.running ? <ActivityIndicator size="small" /> : <Text style={[styles.rowValue, { color: theme.textSecondary }]}>›</Text>}
+            </View>
+          </Pressable>
+
+          {/* 本地数据管理入口 */}
+          <Pressable onPress={() => router.push('/data-manage')}>
+            <View style={styles.row}>
+              <View style={styles.sourceLeft}>
+                <Text style={[styles.rowLabel, { color: theme.text }]}>本地数据管理</Text>
+                <Text style={[styles.sourceDesc, { color: theme.textSecondary }]}>查看明细与占用空间，可按周期删除或清空</Text>
+              </View>
+              <Text style={[styles.rowValue, { color: theme.textSecondary }]}>›</Text>
+            </View>
+          </Pressable>
+
+          {/* 本地化数据模式 */}
           <SwitchRow
             label="本地化数据模式"
-            desc="选股与K线优先读本机已下载数据，没下载到的自动回退联网"
+            desc="K 线优先读取本地数据；缺失的股票自动走网络。筛选始终只使用本地数据。"
             value={localMode}
             onChange={async (v) => { setLocalMode(v); await setLocalDataMode(v); }}
             theme={theme}
@@ -185,17 +240,6 @@ export default function SettingsScreen() {
             onChange={async (v) => { setIncremental(v); await setIncrementalUpdate(v); }}
             theme={theme}
           />
-          <View style={styles.row}>
-            <Text style={[styles.rowLabel, { color: theme.textSecondary, fontSize: 12 }]}>
-              日线约 2 年、周线约 10 年、月线约 25 年；周/月线按周/月刷新，日常更新只补日线。
-            </Text>
-          </View>
-          <Pressable onPress={onClear}>
-            <View style={styles.row}>
-              <Text style={[styles.rowLabel, { color: '#E43B3B' }]}>全部清除本地数据</Text>
-              <Text style={[styles.rowValue, { color: theme.textSecondary }]}>›</Text>
-            </View>
-          </Pressable>
         </Section>
 
         {/* 后台下载 */}
@@ -348,4 +392,6 @@ const styles = StyleSheet.create({
   segBtnWrap: { flex: 1 },
   segBtn: { paddingVertical: 8, borderRadius: 8, alignItems: 'center' },
   segText: { fontSize: 13, fontWeight: '600' },
+  progressTrack: { height: 4, borderRadius: 2, marginTop: 8, overflow: 'hidden' },
+  progressFill: { height: 4, borderRadius: 2 },
 });

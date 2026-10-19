@@ -7,17 +7,29 @@
 
 import { Colors } from '@/constants/theme';
 
-/** 涨跌色 */
+/**
+ * 涨跌色（补充规格 §5.1）：深色主题 红 #FF5252 / 绿 #26A69A；浅色主题相应加深（对比度 ≥ 4.5:1）。
+ * 通过 setQuoteDark 随主题切换（use-color-scheme 调用）。
+ */
+let _isDark = true; // 默认深色（盯盘场景）
+/** 供 use-color-scheme 在主题切换时调用 */
+export function setQuoteDark(isDark: boolean): void {
+  _isDark = isDark;
+}
+
+/** 涨跌色（主题感知） */
 export const QuoteColors = {
-  /** 上涨 / 正数 */
-  up: '#E43B3B',
-  /** 下跌 / 负数 */
-  down: '#0AA869',
+  get up(): string {
+    return _isDark ? '#FF5252' : '#D63030';
+  },
+  get down(): string {
+    return _isDark ? '#26A69A' : '#0F9B6C';
+  },
   /** 平盘 */
   flat: '#8A8F98',
 } as const;
 
-/** 根据涨跌值取色（A 股口径：涨红跌绿） */
+/** 根据涨跌值取色（A 股口径：涨红跌绿，随主题） */
 export function upDownColor(v: number | undefined | null): string {
   if (v === undefined || v === null || Number.isNaN(v) || v === 0) {
     return QuoteColors.flat;

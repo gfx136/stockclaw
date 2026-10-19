@@ -329,6 +329,7 @@ export function snapshotAt(
     ma5: pick(series.ma[5]),
     ma10: pick(series.ma[10]),
     ma20: pick(series.ma[20]),
+    ma26: pick(series.ma[26]),
     ma60: pick(series.ma[60]),
     dif: pick(series.macd.dif),
     dea: pick(series.macd.dea),

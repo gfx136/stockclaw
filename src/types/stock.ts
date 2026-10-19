@@ -113,6 +113,7 @@ export interface IndicatorSnapshot {
   ma5?: number;
   ma10?: number;
   ma20?: number;
+  ma26?: number;
   ma60?: number;
   dif?: number;
   dea?: number;

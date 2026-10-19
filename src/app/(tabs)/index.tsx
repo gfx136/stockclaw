@@ -20,6 +20,7 @@ import { ThemedText } from '@/components/themed-text';
 import { useTheme } from '@/hooks/use-theme';
 import { useOnline } from '@/hooks/use-online';
 import { fetchAllStocks } from '@/lib/api/failover';
+import { setDetailList } from '@/lib/detail-nav';
 import { loadFavorites, toggleFavorite } from '@/lib/favorites';
 import { getFilterState, setFilter, subscribeFilter } from '@/lib/filter-store';
 import { getHomeSort, setHomeSort, type HomeSortKey } from '@/lib/prefs';
@@ -208,8 +209,12 @@ export default function AllStocksScreen() {
   }, []);
 
   const openDetail = useCallback(
-    (s: Stock) => router.push(`/stock/${s.code}?name=${encodeURIComponent(s.name)}`),
-    [router]
+    (s: Stock) => {
+      // 存入当前列表（详情页上一只/下一只按此顺序循环，规格 §2.5）
+      setDetailList(view.map((x) => ({ code: x.code, name: x.name })));
+      router.push(`/stock/${s.code}?name=${encodeURIComponent(s.name)}`);
+    },
+    [router, view]
   );
 
   const sortLabel = SORT_OPTIONS.find((o) => o.key === sortKey)!.label.replace(/序$/, '');

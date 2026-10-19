@@ -81,3 +81,18 @@ export const getHomeSort = () => getStr<HomeSortKey>('home_sort', 'code');
 export const setHomeSort = (v: HomeSortKey) => setStr('home_sort', v);
 export const getResultsSort = () => getStr<HomeSortKey>('results_sort', 'code');
 export const setResultsSort = (v: HomeSortKey) => setStr('results_sort', v);
+
+/** 详情页指标开关（规格 §2.4：状态持久化） */
+export const getShowBoll = () => getBool('ind_boll', false);
+export const setShowBoll = (v: boolean) => setBool('ind_boll', v);
+export const getShowBbi = () => getBool('ind_bbi', true);
+export const setShowBbi = (v: boolean) => setBool('ind_bbi', v);
+export const getShowMacd = () => getBool('ind_macd', true);
+export const setShowMacd = (v: boolean) => setBool('ind_macd', v);
+export const getShowKdj = () => getBool('ind_kdj', false);
+export const setShowKdj = (v: boolean) => setBool('ind_kdj', v);
+export const getShowRsi = () => getBool('ind_rsi', false);
+export const setShowRsi = (v: boolean) => setBool('ind_rsi', v);
+/** 详情页方向偏好（规格 §2.10：记住横屏偏好） */
+export const getDetailLandscape = () => getBool('detail_landscape', false);
+export const setDetailLandscape = (v: boolean) => setBool('detail_landscape', v);

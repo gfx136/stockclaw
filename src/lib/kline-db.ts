@@ -302,3 +302,39 @@ export async function dbStats(): Promise<{
   }
   return { totalBars: row?.n ?? 0, codes: row?.c ?? 0, bytes };
 }
+
+/** 分周期统计（本地数据管理明细页用） */
+export interface PeriodStat {
+  period: KlinePeriod;
+  codes: number;
+  bars: number;
+  lastUpdate: number | null;
+}
+export async function perPeriodStats(): Promise<PeriodStat[]> {
+  const db = await getDb();
+  const out: PeriodStat[] = [];
+  for (const p of ['60min', 'daily', 'weekly', 'monthly'] as KlinePeriod[]) {
+    const row = await db.getFirstAsync<{ n: number; c: number; u: number | null }>(
+      `SELECT COALESCE(SUM(bars),0) AS n, COUNT(DISTINCT symbol) AS c, MAX(updatedAt) AS u FROM meta WHERE period = ?`,
+      [p]
+    );
+    out.push({ period: p, codes: row?.c ?? 0, bars: row?.n ?? 0, lastUpdate: row?.u ?? null });
+  }
+  return out;
+}
+
+/** 按周期删除本地数据（二次确认后调用；下次下载重新补齐） */
+export async function deleteByPeriod(period: KlinePeriod): Promise<void> {
+  const db = await getDb();
+  await db.withTransactionAsync(async () => {
+    await db.runAsync(`DELETE FROM kline WHERE period = ?`, [period]);
+    await db.runAsync(`DELETE FROM meta WHERE period = ?`, [period]);
+  });
+}
+
+/** 全部本地数据的最后更新时间（unix 秒） */
+export async function lastUpdateAt(): Promise<number | null> {
+  const db = await getDb();
+  const row = await db.getFirstAsync<{ u: number | null }>(`SELECT MAX(updatedAt) AS u FROM meta`);
+  return row?.u ?? null;
+}
