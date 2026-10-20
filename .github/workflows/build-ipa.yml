@@ -27,10 +27,16 @@ jobs:
         with:
           node-version: 22
 
-      - name: Select latest Xcode
+      - name: Select Xcode
         run: |
-          LATEST=$(ls -d /Applications/Xcode*.app | sort -V | tail -n1)
-          sudo xcode-select -s "$LATEST"
+          # ⚠️ 锁定 16.4 而非"最新"。
+          #    macos-15 镜像默认就是 16.4（见 runner-images 文档），
+          #    而 mirrors 里还有 26.x —— 让 `ls | sort -V | tail -1` 选"最新"
+          #    可能选到 26.3 这类过新的版本，反而与 Expo 的构建脚本不兼容。
+          #    Expo SDK 要求 ≥16.4，16.4 是最保守的满足版本。
+          if [ -d /Applications/Xcode_16.4.app ]; then
+            sudo xcode-select -s /Applications/Xcode_16.4.app
+          fi
           xcodebuild -version
 
       - name: Install JS dependencies
