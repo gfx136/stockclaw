@@ -10,6 +10,8 @@ import { useTheme } from '@/hooks/use-theme';
 import { useT } from '@/lib/i18n';
 import { fetchAllStocks } from '@/lib/api/failover';
 import {
+  beginPreparing,
+  endPreparing,
   getDownloadedCount,
   getDownloadState,
   hasLocalData,
@@ -106,6 +108,11 @@ export default function SettingsScreen() {
 
   /** 下载/更新本地 K 线（补充规格 §6.1 四状态文案） */
   const onDownloadAll = useCallback(async () => {
+    // 状态1：正在准备（取列表 / 统计）
+    if (dlState.preparing) {
+      Alert.alert(t('settings_dlNotice'), t('settings_dlPreparing'));
+      return;
+    }
     // 状态2：上一次仍在进行
     if (dlState.running) {
       Alert.alert(t('settings_dlRunningTitle'), tf('settings_downloadProgress', { done: dlState.done, total: dlState.total }), [
@@ -118,14 +125,18 @@ export default function SettingsScreen() {
       return;
     }
     try {
+      // 问题1修复：先置「准备中」，让进度条立刻出现（取列表可能要几秒）
+      beginPreparing();
       const stocks = await fetchAllStocks(200);
       if (stocks.length === 0) {
+        endPreparing();
         Alert.alert(t('settings_dlNotice'), t('settings_noStockList'));
         return;
       }
       const hasData = await hasLocalData();
       if (!hasData) {
         // 状态3：首次全量 —— 开始前确认
+        endPreparing();
         Alert.alert(
           t('settings_dlFirstTitle'),
           t('settings_dlFirstDesc'),
@@ -135,10 +146,11 @@ export default function SettingsScreen() {
           ]
         );
       } else {
-        // 状态4：日常增量 —— 直接启动
+        // 状态4：日常增量 —— 直接启动（beginPreparing 已置位，startFullDownload 会接管）
         startFullDownload(stocks);
       }
     } catch (e) {
+      endPreparing();
       Alert.alert(t('settings_dlFail'), e instanceof Error ? e.message : t('settings_checkNetwork'));
     }
   }, [dlState, t, tf]);
@@ -239,22 +251,62 @@ export default function SettingsScreen() {
                 <Text style={[styles.sourceDesc, { color: theme.textSecondary }]}>
                   {dlState.running
                     ? tf('settings_downloadProgress', { done: dlState.done, total: dlState.total }) + (dlState.paused ? t('settings_paused') : '')
-                    : downloadedCount > 0
-                      ? tf('settings_syncedStocks', { n: downloadedCount })
-                      : t('settings_noLocalData')}
+                    : dlState.preparing
+                      ? t('settings_dlPreparing')
+                      : dlState.lastResult === 'up-to-date'
+                        ? tf('settings_dlUpToDate', { n: downloadedCount })
+                        : dlState.lastResult === 'done'
+                          ? tf('settings_dlDone', {
+                            n: dlState.done,
+                            failed: dlState.failed > 0
+                              ? tf('settings_dlDoneFailed', { failed: dlState.failed })
+                              : '',
+                          })
+                          : dlState.lastResult === 'stopped'
+                            ? t('settings_dlStopped')
+                            : downloadedCount > 0
+                              ? tf('settings_syncedStocks', { n: downloadedCount })
+                              : t('settings_noLocalData')}
                 </Text>
-                {dlState.running ? (
+
+                {/* 进度条（问题1修复）：running / preparing 时都显示，给用户明确反馈 */}
+                {dlState.running || dlState.preparing ? (
                   <View style={[styles.progressTrack, { backgroundColor: theme.background }]}>
-                    <View style={[styles.progressFill, { backgroundColor: theme.tint, width: `${dlState.total ? (dlState.done / dlState.total) * 100 : 0}%` }]} />
+                    <View
+                      style={[
+                        styles.progressFill,
+                        {
+                          backgroundColor: dlState.preparing ? theme.textSecondary : theme.tint,
+                          width: `${dlState.preparing
+                            ? 100
+                            : dlState.total ? Math.max(2, (dlState.done / dlState.total) * 100) : 0}%`,
+                        },
+                      ]}
+                    />
                   </View>
                 ) : null}
+
+                {/* 进度明细：百分比 + 当前股票 + 预计剩余 */}
+                {dlState.running && dlState.total > 0 ? (
+                  <Text style={[styles.dlDetail, { color: theme.textSecondary }]}>
+                    {Math.round((dlState.done / dlState.total) * 100)}%
+                    {dlState.current ? `　·　${dlState.current}` : ''}
+                    {dlState.etaSec !== null && dlState.etaSec > 0
+                      ? `　·　${t('settings_dlEta')} ${fmtEta(dlState.etaSec)}`
+                      : ''}
+                    {dlState.failed > 0 ? `　·　${t('settings_dlFailedN')} ${dlState.failed}` : ''}
+                  </Text>
+                ) : null}
+
                 {dlState.running ? (
                   <Text style={[styles.dlNote, { color: theme.textSecondary }]}>
                     {t('settings_continueBg')}
                   </Text>
                 ) : null}
               </View>
-              {dlState.running ? <ActivityIndicator size="small" /> : <Text style={[styles.rowValue, { color: theme.textSecondary }]}>›</Text>}
+              {dlState.running || dlState.preparing
+                ? <ActivityIndicator size="small" />
+                : <Text style={[styles.rowValue, { color: theme.textSecondary }]}>›</Text>}
             </View>
           </Pressable>
 
@@ -368,6 +420,15 @@ export default function SettingsScreen() {
   );
 }
 
+/** 剩余时间格式化（问题1：进度条旁的 ETA） */
+function fmtEta(sec: number): string {
+  if (sec < 60) return `${sec}s`;
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  if (m < 60) return s > 0 ? `${m}m${s}s` : `${m}m`;
+  return `${Math.floor(m / 60)}h${m % 60}m`;
+}
+
 function fmtBytes(b: number): string {
   if (b <= 0) return '0 B';
   if (b >= 1024 * 1024 * 1024) return `${(b / 1024 / 1024 / 1024).toFixed(2)} GB`;
@@ -465,6 +526,7 @@ const styles = StyleSheet.create({
   segBtn: { paddingVertical: 8, borderRadius: 8, alignItems: 'center' },
   segText: { fontSize: 13, fontWeight: '600' },
   progressTrack: { height: 4, borderRadius: 2, marginTop: 8, overflow: 'hidden' },
+  dlDetail: { fontSize: 11, marginTop: 4, fontVariant: ['tabular-nums'] },
   progressFill: { height: 4, borderRadius: 2 },
   dlNote: { fontSize: 10, marginTop: 4, lineHeight: 14 },
   sliderRow: { flexDirection: 'row', gap: 8, paddingHorizontal: 14, paddingBottom: 12 },

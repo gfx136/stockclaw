@@ -16,11 +16,13 @@ export default function TabLayout() {
   return (
     <Tabs
       screenOptions={{
+        // 问题3修复：隐藏系统导航栏。
+        // 各 tab 页内已自绘页面标题（与搜索框/工具行同一行），系统栏再显示一次标题
+        // 会出现「双重标题」，且白白占掉 ~56pt 高度。
+        headerShown: false,
         tabBarActiveTintColor: colors.text,
         tabBarInactiveTintColor: colors.textSecondary,
         tabBarStyle: { backgroundColor: colors.background },
-        headerStyle: { backgroundColor: colors.background },
-        headerTintColor: colors.text,
       }}>
       <Tabs.Screen
         name="index"

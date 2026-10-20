@@ -359,6 +359,12 @@ export function InteractiveKline({
 
   const selBar = selected !== null && selected >= 0 && selected < total ? bars[selected] : null;
   const crossActive = crossY !== null;
+  /**
+   * 信息条是否显示（问题2修复）。
+   * ⚠️ 判定条件是 `crossActive || selBar`——即**长按十字光标** 与 **单击/点按选中**
+   *    两种情况都会显示信息条。图例的显示要取它的反面，二者互斥，不能只判断 crossActive。
+   */
+  const showInfoBar = (crossActive || selected !== null) && !!selBar;
 
   const linePath = (arr: (number | undefined)[], yFn: (v: number) => number): string => {
     let d = '';
@@ -389,8 +395,10 @@ export function InteractiveKline({
   return (
     <View style={{ width }}>
       {/* 图例（§2.3：图表区左上角覆盖，色点+同色文字）
-          问题4修复：十字光标激活时隐藏图例，避免与信息条重叠在同一位置 */}
-      {legend.length > 0 && !crossActive ? (
+          问题2修复：**只要信息条会显示**就隐藏图例（包括单击选中 bar 的情况）。
+          早期条件只判断 crossActive（长按），但单击只设 selected 不设 crossY，
+          导致图例与信息条同时渲染在同一位置、互相覆盖。 */}
+      {legend.length > 0 && !showInfoBar ? (
         <View style={styles.legend} pointerEvents="none">
           {legend.map((it) => (
             <View key={it.key} style={styles.legendItem}>
@@ -556,8 +564,9 @@ export function InteractiveKline({
             ) : null}
           </Svg>
 
-          {/* 信息条（§3.3，覆盖图表顶部，不挤压高度） */}
-          {(crossActive || selBar) && selBar ? (
+          {/* 信息条（§3.3，覆盖图表顶部，不挤压高度）
+              与图例互斥：显示时图例自动隐藏（问题2） */}
+          {showInfoBar && selBar ? (
             <View style={styles.infoBar} pointerEvents="none">
               <Text style={styles.infoLine1} numberOfLines={1}>
                 {selBar.date}  |  开 {fmtPrice(selBar.open)}  高 {fmtPrice(selBar.high)}  低 {fmtPrice(selBar.low)}  收 {fmtPrice(selBar.close)}  <Text style={{ color: QuoteColors.up }}>{fmtPercent(selBar.changePercent)}</Text>

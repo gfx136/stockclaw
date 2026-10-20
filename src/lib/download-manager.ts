@@ -29,6 +29,12 @@ const RETRY_DELAYS = [1000, 3000];
 export interface DownloadState {
   running: boolean;
   paused: boolean;
+  /**
+   * 准备阶段（问题1修复）：正在取股票列表 / 统计待下载数量。
+   * 这个阶段可能持续数秒（网络请求 + 读断点），若不显示状态，
+   * 用户点完「下载」会觉得毫无反应。
+   */
+  preparing: boolean;
   done: number;
   total: number;
   failed: number;
@@ -36,10 +42,15 @@ export interface DownloadState {
   lastRunAt: number | null;
   /** 预计剩余秒（滚动平均） */
   etaSec: number | null;
+  /** 本次运行结束后的结果（用于给出明确反馈） */
+  lastResult: 'done' | 'up-to-date' | 'stopped' | null;
+  /** 已存在本地数据的股票数（用于「已是最新」提示） */
+  skipped: number;
 }
 
 let state: DownloadState = {
-  running: false, paused: false, done: 0, total: 0, failed: 0, current: '', lastRunAt: null, etaSec: null,
+  running: false, paused: false, preparing: false, done: 0, total: 0, failed: 0,
+  current: '', lastRunAt: null, etaSec: null, lastResult: null, skipped: 0,
 };
 const listeners = new Set<() => void>();
 function notify() {
@@ -97,21 +108,38 @@ export async function clearDownloadCursor(): Promise<void> {
  * @param opts.background 后台模式（并发降为 2）
  */
 export async function startFullDownload(stocks: Stock[], opts?: { background?: boolean }): Promise<void> {
+  // ⚠️ 只拦「真正在跑」的情况。不能拦 preparing——因为调用方可能是
+  //    beginPreparing() 之后紧接着调本函数（日常增量路径），
+  //    若此处拦 preparing 会导致自己把自己挡住、下载永远不启动。
   if (state.running) return;
   stopFlag = false;
   pauseFlag = false;
+
+  // 问题1修复①：先进入「准备中」状态并立刻通知 UI，
+  // 否则读断点/统计待下载数量的这几秒里用户看不到任何反馈。
+  state = { ...state, preparing: true, lastResult: null, done: 0, failed: 0, etaSec: null };
+  notify();
+
   const doneSet = await loadDoneSet();
   const todo = stocks.filter((s) => !doneSet.has(s.code));
+  const alreadyHad = stocks.length - todo.length;
+
   if (todo.length === 0) {
-    state = { ...state, lastRunAt: Date.now() };
+    // 问题1修复②：全部已下载时不再静默返回，而是给出明确的「已是最新」反馈。
+    state = {
+      ...state, preparing: false, running: false, lastResult: 'up-to-date',
+      skipped: alreadyHad, total: stocks.length, done: 0, failed: 0, lastRunAt: Date.now(),
+    };
     notify();
+    try { await AsyncStorage.setItem(LAST_RUN_KEY, JSON.stringify({ at: Date.now(), count: 0 })); } catch { /* ignore */ }
     return;
   }
+
   const concurrency = opts?.background ? BACKGROUND_CONCURRENCY : FOREGROUND_CONCURRENCY;
   const startTs = Date.now();
   state = {
-    running: true, paused: false, done: 0, total: todo.length, failed: 0,
-    current: '', lastRunAt: state.lastRunAt, etaSec: null,
+    running: true, paused: false, preparing: false, done: 0, total: todo.length, failed: 0,
+    current: '', lastRunAt: state.lastRunAt, etaSec: null, lastResult: null, skipped: alreadyHad,
   };
   notify();
 
@@ -176,13 +204,36 @@ export async function startFullDownload(stocks: Stock[], opts?: { background?: b
   if (!stopFlag) {
     try { await AsyncStorage.setItem(LAST_RUN_KEY, JSON.stringify({ at: Date.now(), count: state.done })); } catch { /* ignore */ }
   }
-  state = { ...state, running: false, paused: false, current: '', lastRunAt: Date.now(), etaSec: null };
+  // 结束时给出明确结果（问题1修复③）：完成 / 被用户停止
+  state = {
+    ...state, running: false, paused: false, preparing: false, current: '', etaSec: null,
+    lastRunAt: Date.now(), lastResult: stopFlag ? 'stopped' : 'done',
+  };
   notify();
 }
 
 export function pauseDownload(): void {
   pauseFlag = true;
   state.paused = true;
+  notify();
+}
+
+/**
+ * 进入「准备中」状态（问题1修复）。
+ * 调用方在开始取股票列表**之前**调用，让进度条立即出现，
+ * 避免「点了下载但几秒内毫无反应」。若随后未真正开始下载（如用户取消），
+ * 必须调用 endPreparing() 复位。
+ */
+export function beginPreparing(): void {
+  if (state.running) return;
+  state = { ...state, preparing: true, lastResult: null, done: 0, failed: 0, total: 0, etaSec: null };
+  notify();
+}
+
+/** 退出「准备中」状态（未进入实际下载时调用） */
+export function endPreparing(): void {
+  if (state.running) return; // 已转入实际下载，不做复位
+  state = { ...state, preparing: false };
   notify();
 }
 export function resumeDownload(): void {
