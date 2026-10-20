@@ -1,0 +1,22 @@
+name: Probe macOS runners
+
+# 轻量探针：同时向多个 macOS runner 标签投递极短任务，
+# 用于判断哪个标签的容量池当前可用（macos-latest 通常最挤）。
+# 每个任务 timeout 3 分钟，快速失败，成本极低。
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-13, macos-14, macos-15, macos-latest]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 3
+    steps:
+      - name: Report availability
+        run: |
+          echo "runner=${{ matrix.runner }}"
+          sw_vers
+          echo "✅ 该标签可用"
