@@ -9,12 +9,14 @@ on:
 
 jobs:
   build:
-    # ⚠️ 用 macos-14 而非 macos-latest。
-    #    实测（2026-10-20 晚）：macos-latest / macos-13 / macos-15 同一时刻
-    #    全部排队 15 分钟后被回收（steps=0），而 **macos-14 在 0.1 分钟即分配机器并跑完**。
-    #    原因是免费账号共享池里 macos-latest 是最拥挤的标签；固定到具体版本反而更稳。
-    #    若某天 macos-14 也开始堵，可用 .github/workflows/probe-runners.yml 探针重测。
-    runs-on: macos-14
+    # ⚠️ runner 选择结论（2026-10-20 实测，别再走弯路）：
+    #   · macos-14  → 容量好（0.1 分钟即分配），但 **只装了 Xcode 16.2**，
+    #                 跑 ExpoModulesJSI 构建脚本会失败（Expo SDK 需要 ≥16.4）。
+    #   · macos-15 / macos-latest → Xcode 够新，能编译成功，
+    #                 但高峰期（北京 12:00–23:00）共享池经常排不上队。
+    #   ⇒ 选 macos-15，配合 scripts/retry-ipa.sh 自动重试撞空闲窗口。
+    #     推荐在北京凌晨/清晨触发（UTC 夜间），成功率最高。
+    runs-on: macos-15
     timeout-minutes: 45
     steps:
       - name: Checkout this repo
