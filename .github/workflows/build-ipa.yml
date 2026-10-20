@@ -9,7 +9,12 @@ on:
 
 jobs:
   build:
-    runs-on: macos-latest
+    # ⚠️ 用 macos-14 而非 macos-latest。
+    #    实测（2026-10-20 晚）：macos-latest / macos-13 / macos-15 同一时刻
+    #    全部排队 15 分钟后被回收（steps=0），而 **macos-14 在 0.1 分钟即分配机器并跑完**。
+    #    原因是免费账号共享池里 macos-latest 是最拥挤的标签；固定到具体版本反而更稳。
+    #    若某天 macos-14 也开始堵，可用 .github/workflows/probe-runners.yml 探针重测。
+    runs-on: macos-14
     timeout-minutes: 45
     steps:
       - name: Checkout this repo
