@@ -61,7 +61,7 @@ try:
     print(max(ids) if ids else 0)
 except Exception:
     print(0)
-"
+" | tr -d '\r'
 }
 
 log() { printf '[%s] %s\n' "$(date +%H:%M:%S)" "$*"; }
@@ -83,7 +83,7 @@ if not runs:
 act = [r for r in runs if r['status'] in ACT]
 r = max(act, key=lambda x: x['id']) if act else runs[0]
 print(r['id'], r['status'], r.get('conclusion') or 'null', r['created_at'])
-"
+" | tr -d '\r'
 }
 
 # 只保留一个活跃 run，其余全部取消（避免多条并发排队互相占位、也避免重复 dispatch）
@@ -98,7 +98,7 @@ try:
             print(r['id'])
 except Exception:
     pass
-")
+" | tr -d '\r')
   for id in $ids; do
     api_post "/repos/$REPO/actions/runs/$id/cancel" >/dev/null
     log "已取消多余活跃 run $id（保留 $keep）"
@@ -114,7 +114,7 @@ try:
     print(len(jobs[0].get('steps', [])) if jobs else 0)
 except Exception:
     print(-1)
-"
+" | tr -d '\r'
 }
 
 dispatch() {
@@ -151,7 +151,7 @@ try:
     print(max(new) if new else 0)
 except Exception:
     print(0)
-")
+" | tr -d '\r')
     if [ -n "$rid" ] && [ "$rid" != "0" ]; then
       log "新 run 已创建: $rid（等待 ${waited}s）"
       NEW_RUN_ID="$rid"
@@ -173,7 +173,7 @@ try:
             print(r['id'])
 except Exception:
     pass
-")
+" | tr -d '\r')
   for id in $ids; do
     api_post "/repos/$REPO/actions/runs/$id/cancel" >/dev/null
     log "已取消活跃 run $id"
@@ -189,7 +189,7 @@ try:
     print(a[0]['archive_download_url'] if a else '')
 except Exception:
     print('')
-")
+" | tr -d '\r')
   if [ -z "$url" ]; then
     log "未找到 artifact"
     return 1
@@ -216,7 +216,7 @@ main() {
   for round in $(seq 1 "$MAX_ROUNDS"); do
     log "── 第 $round/$MAX_ROUNDS 轮 ──"
 
-    read -r rid status concl created <<<"$(pick_run)"
+    read -r rid status concl created <<<"$(pick_run | tr -d '\r')"
     if [ "$rid" = "0" ]; then
       log "读取 run 列表失败（网络？），稍后重试"
       sleep "$POLL_SEC"; continue
@@ -243,7 +243,7 @@ main() {
 from datetime import datetime, timezone
 c = datetime.fromisoformat('$created'.replace('Z','+00:00'))
 print(int((datetime.now(timezone.utc) - c).total_seconds() / 60))
-")
+" | tr -d '\r')
       # 一旦开始真正执行（in_progress），耐心等编译完成
       if [ "$status" = "in_progress" ]; then
         log "run $rid 已开始编译，等待完成…"

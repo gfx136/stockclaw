@@ -24,7 +24,10 @@ try:
     print(d.get('status','none'), d.get('conclusion') or 'null')
 except Exception:
     print('none null')
-")
+" | tr -d '\r')
+  # ⚠️ 必须 tr -d '\r'：Windows 上 python 写管道会把 \n 翻成 \r\n，
+  #    于是 concl 变成 "success\r"，与 "success" 比较恒为 false ——
+  #    实测导致 run 明明编译成功，却走进失败分支、不去下载 artifact。
   log "run $RUN_ID: $status / $concl"
 
   if [ "$status" = "completed" ]; then
@@ -60,7 +63,7 @@ except Exception: print('')
 import sys, json
 try: print(len(json.load(sys.stdin)['jobs'][0].get('steps',[])))
 except Exception: print(-1)
-")
+" | tr -d '\r')
     log "run 结束，结果=$concl，步骤数=$STEPS"
     if [ "$STEPS" = "0" ]; then
       log "  → 步骤数 0 = 排队被回收（非编译错误）"
