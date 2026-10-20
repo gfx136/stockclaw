@@ -9,14 +9,19 @@ on:
 
 jobs:
   build:
-    # ⚠️ runner 选择结论（2026-10-20 实测，别再走弯路）：
-    #   · macos-14  → 容量好（0.1 分钟即分配），但 **只装了 Xcode 16.2**，
-    #                 跑 ExpoModulesJSI 构建脚本会失败（Expo SDK 需要 ≥16.4）。
-    #   · macos-15 / macos-latest → Xcode 够新，能编译成功，
-    #                 但高峰期（北京 12:00–23:00）共享池经常排不上队。
-    #   ⇒ 选 macos-15，配合 scripts/retry-ipa.sh 自动重试撞空闲窗口。
-    #     推荐在北京凌晨/清晨触发（UTC 夜间），成功率最高。
-    runs-on: macos-15
+    # ⚠️ runner + Xcode 选择结论（2026-10-21 用日志实证，别再走弯路）：
+    #   · 最后一次成功构建 run 39418817313（2026-10-20 11:58Z，产出 v8）
+    #     跑在 macos-latest 上，实际使用的是 **Xcode 26.6**。
+    #   · macos-14 上 Xcode 16.2 的失败原因不是"版本太旧"这么笼统，
+    #     而是 pod 里的 SwiftPM 包要求 swift-tools-version 6.2.0：
+    #       xcodebuild: error: Could not resolve package dependencies:
+    #         package 'apple' is using Swift tools version 6.2.0
+    #         but the installed version is 6.0.0
+    #     Swift 6.2 只在 Xcode 26+ 提供 → Xcode 16.2(6.0) / 16.4(6.1) 都不够。
+    #   ⇒ 必须选 Xcode 26.x，所以锁 16.4 是错的，改为"取最新的 Xcode 26"。
+    #   · 容量：macos-15/latest 共享池拥挤，排队满 15 分钟会被系统取消（runner 为空、
+    #     步骤数 0）。这不是编译错误，配合 scripts/retry-ipa.sh 反复撞窗口即可。
+    runs-on: macos-latest
     timeout-minutes: 45
     steps:
       - name: Checkout this repo
@@ -29,15 +34,20 @@ jobs:
 
       - name: Select Xcode
         run: |
-          # ⚠️ 锁定 16.4 而非"最新"。
-          #    macos-15 镜像默认就是 16.4（见 runner-images 文档），
-          #    而 mirrors 里还有 26.x —— 让 `ls | sort -V | tail -1` 选"最新"
-          #    可能选到 26.3 这类过新的版本，反而与 Expo 的构建脚本不兼容。
-          #    Expo SDK 要求 ≥16.4，16.4 是最保守的满足版本。
-          if [ -d /Applications/Xcode_16.4.app ]; then
-            sudo xcode-select -s /Applications/Xcode_16.4.app
+          # 必须 Xcode 26+（Swift 6.2）。取已装的最高 26.x，没有再退回最高版本。
+          XC=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1)
+          if [ -z "$XC" ]; then
+            XC=$(ls -d /Applications/Xcode_2[6-9]*.app 2>/dev/null | sort -V | tail -1)
           fi
+          if [ -z "$XC" ]; then
+            echo "::error::镜像里找不到 Xcode 26+，Swift 6.2 无法满足，构建必失败"
+            ls -d /Applications/Xcode*.app
+            exit 1
+          fi
+          sudo xcode-select -s "$XC"
+          echo "Selected: $XC"
           xcodebuild -version
+          swift --version
 
       - name: Install JS dependencies
         run: npm install --legacy-peer-deps
