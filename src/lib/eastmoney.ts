@@ -47,6 +47,21 @@ async function fetchJson(url: string, timeoutMs = 15000): Promise<any> {
   }
 }
 
+/**
+ * 东财日期 → unix 秒。
+ * ⚠️ 分时周期返回的是 `"2026-10-20 10:30"`（不是 ISO 8601），
+ *    iOS 的 JavaScriptCore 对非 ISO 字符串 `new Date()` 会得到 Invalid Date，
+ *    ts 变成 NaN → 绑到 SQLite 是 NULL → 主键 (symbol,period,ts) 去重失效，
+ *    每刷新一次就重复插入一批 60 分钟 K 线。
+ *    这里显式补成 ISO（空格换 T、日期补 T00:00:00），解析失败则返回 0 由调用方剔除。
+ */
+function parseTs(date: string): number {
+  const s = date.trim();
+  const iso = s.includes(' ') ? s.replace(' ', 'T') : s.length <= 10 ? `${s}T00:00:00` : s;
+  const ms = Date.parse(iso);
+  return Number.isFinite(ms) ? Math.floor(ms / 1000) : 0;
+}
+
 /** 拉取 K 线历史（日/周/月） */
 export async function fetchKlines(
   code: string,
@@ -66,12 +81,15 @@ export async function fetchKlines(
   if (json.rc !== 0 || !json.data?.klines) return [];
 
   const klines: string[] = json.data.klines;
-  return klines.map((line) => {
+  const out: KlineBar[] = [];
+  for (const line of klines) {
     // 格式：日期,开,收,高,低,成交量,成交额,振幅,涨跌幅,涨跌额,换手率
     const parts = line.split(',');
     const date = parts[0];
-    return {
-      ts: Math.floor(new Date(date).getTime() / 1000),
+    const ts = parseTs(date);
+    if (!ts) continue; // 解析不出的行直接丢弃，避免写入 NaN/NULL 污染主键
+    out.push({
+      ts,
       date,
       open: parseFloat(parts[1]),
       close: parseFloat(parts[2]),
@@ -81,8 +99,9 @@ export async function fetchKlines(
       amount: parseFloat(parts[6] ?? '0'),
       changePercent: parseFloat(parts[8] ?? '0'),
       turnover: parseFloat(parts[10] ?? '0'),
-    };
-  });
+    });
+  }
+  return out;
 }
 
 /**

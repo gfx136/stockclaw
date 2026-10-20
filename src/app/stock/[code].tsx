@@ -28,8 +28,8 @@ import { useT } from '@/lib/i18n';
 import { fmtChange, fmtPercent, fmtPrice, monthDayTime, upDownColor } from '@/lib/format';
 import { indicatorColor } from '@/lib/indicator-palette';
 import { calcAllIndicators, nthLast, snapshotAt } from '@/lib/indicators';
-import { downloadAllPeriods, downloadKlines } from '@/lib/kline-downloader';
-import { lastUpdateAt, loadKlines } from '@/lib/kline-db';
+import { downloadAllPeriods, refreshStockKlines } from '@/lib/kline-downloader';
+import { getLastUpdate, loadKlines } from '@/lib/kline-db';
 import {
   getDefaultBars,
   getDetailLandscape,
@@ -56,6 +56,8 @@ const PERIODS: { key: KlinePeriod; labelKey: string; shortKey: string }[] = [
   { key: 'monthly', labelKey: 'detail_periodMonthly', shortKey: 'detail_periodMonthlyShort' },
 ];
 const BAR_COUNT = 800;
+/** 本地至少有这么几根就先画图（不足 30 根只是没有指标，不该当成"没数据"） */
+const MIN_RENDER_BARS = 5;
 
 export default function StockDetailScreen() {
   const params = useLocalSearchParams<{ code: string; name?: string }>();
@@ -90,6 +92,8 @@ export default function StockDetailScreen() {
   const [defaultBars, setDefaultBarsState] = useState(60);
   const [dataAt, setDataAt] = useState<number | null>(null);
   const [weeklyBars, setWeeklyBars] = useState<KlineBar[]>([]);
+  /** 滚动区实测视口高度（问题1修复：不再靠屏高硬算，避免零碎间距累积误差） */
+  const [viewportH, setViewportH] = useState(0);
 
   const stockName = name || getDetailName(code) || code;
 
@@ -127,59 +131,57 @@ export default function StockDetailScreen() {
   }, [code]);
 
   /**
-   * 读 K 线（问题2修复）：**本地优先 → 本地不足时自动联网回退 → 成功即落库**。
-   * 规格「本地化数据模式」明确：K 线优先读本地，缺失的股票自动走网络。
-   * 之前只读本地、缺失就显示"尚未下载"，导致已下载全量数据仍误报。
+   * 数据加载（问题2 + 问题3 一起解决）。
+   *
+   * ❗问题2 的真相不止一个：除了下载侧「接口返回空仍被标记完成」导致本地其实没数据，
+   *   原来的读取逻辑本身也会误报——它要求 `rows.length >= 30` 才算「有数据」，
+   *   否则走联网回退，**回退失败就把已有的那几根本地数据也丢掉**，于是显示"需要下载"。
+   *   现在只要本地有 ≥ MIN_RENDER_BARS 根就先画出来。
+   *
+   * ❗问题3：点开个股即静默后台更新该股全部周期（不弹窗、不阻塞界面）。
+   *   刷新确实带回了新数据才重绘，避免打断用户正在看的十字光标。
    */
-  const loadBars = useCallback(async (c: string, p: KlinePeriod) => {
-    if (!c) return;
-    setLoading(true);
-    try {
-      // ① 本地
-      let rows = await loadKlines(c, p, BAR_COUNT);
-      if (rows.length >= 30) {
-        setBars(rows);
-        setSeries(calcAllIndicators(rows, [3, 5, 6, 10, 12, 20, 24, 26, 60]));
-        setDataAt(await lastUpdateAt());
-        return;
-      }
-      // ② 本地不足 → 联网回退，并落库（下次即命中本地）
-      try {
-        const r = await downloadKlines(c, p, BAR_COUNT, false);
-        if (r.ok) {
-          rows = await loadKlines(c, p, BAR_COUNT);
-          setBars(rows);
-          setSeries(rows.length >= 30 ? calcAllIndicators(rows, [3, 5, 6, 10, 12, 20, 24, 26, 60]) : null);
-          setDataAt(await lastUpdateAt());
-          return;
-        }
-      } catch { /* 回退失败则保持空态 */ }
-      setBars([]);
-      setSeries(null);
-    } catch {
-      setBars([]);
-      setSeries(null);
-    } finally {
-      setLoading(false);
-    }
+  const applyRows = useCallback((rows: KlineBar[], at: number | null) => {
+    setBars(rows);
+    setSeries(rows.length >= 30 ? calcAllIndicators(rows, [3, 5, 6, 10, 12, 20, 24, 26, 60]) : null);
+    setDataAt(at);
   }, []);
-  useEffect(() => { loadBars(code, period); }, [code, period, loadBars]);
 
-  // 周线（BBI 组规则判定用）：同样本地优先 + 联网回退
+  const loadSeq = useRef(0);
   useEffect(() => {
     if (!code) return;
-    (async () => {
-      try {
-        let w = await loadKlines(code, 'weekly', 300);
-        if (w.length < 27) {
-          const r = await downloadKlines(code, 'weekly', 300, false).catch(() => null);
-          if (r?.ok) w = await loadKlines(code, 'weekly', 300);
-        }
-        setWeeklyBars(w);
-      } catch { setWeeklyBars([]); }
-    })();
-  }, [code]);
+    const seq = ++loadSeq.current;
+    const alive = () => loadSeq.current === seq;
 
+    (async () => {
+      setLoading(true);
+      // ① 先把本地已有的立刻画出来（含只有几根的残缺情况，不再一律当没有）
+      const local = await loadKlines(code, period, BAR_COUNT).catch(() => [] as KlineBar[]);
+      if (!alive()) return;
+      applyRows(local, await getLastUpdate(code, period).catch(() => null));
+      if (local.length >= MIN_RENDER_BARS) setLoading(false);
+
+      // ② 后台补齐/更新该股全部周期（本地已是最新时几乎零开销）
+      const changed = await refreshStockKlines(code, BAR_COUNT).catch(() => false);
+      if (!alive()) return;
+
+      // ③ 有新数据、或本地本来就不够 → 重读当前周期并重绘
+      if (changed || local.length < MIN_RENDER_BARS) {
+        const rows = await loadKlines(code, period, BAR_COUNT).catch(() => [] as KlineBar[]);
+        if (!alive()) return;
+        applyRows(rows, await getLastUpdate(code, period).catch(() => null));
+      }
+
+      // ④ 周线（BBI 六条规则需要）
+      const w = await loadKlines(code, 'weekly', 300).catch(() => [] as KlineBar[]);
+      if (alive()) setWeeklyBars(w);
+      if (alive()) setLoading(false);
+    })();
+
+    return () => { /* 由 seq 作废过期结果 */ };
+  }, [code, period, applyRows]);
+
+  /** 手动「下载」按钮：强制补该股 4 个周期，再重读当前周期 */
   const onDownload = useCallback(async () => {
     if (!code) return;
     setDownloading(true);
@@ -191,7 +193,8 @@ export default function StockDetailScreen() {
         setTip(t('detail_downloadHint'));
       } else {
         setTip(tf('detail_downloadOk', { ok: okCount, total: results.length }));
-        await loadBars(code, period);
+        const rows = await loadKlines(code, period, BAR_COUNT).catch(() => [] as KlineBar[]);
+        applyRows(rows, await getLastUpdate(code, period).catch(() => null));
         setWeeklyBars(await loadKlines(code, 'weekly', 300).catch(() => []));
       }
     } catch (e) {
@@ -199,7 +202,7 @@ export default function StockDetailScreen() {
     } finally {
       setDownloading(false);
     }
-  }, [code, period, loadBars]);
+  }, [code, period, applyRows, t, tf]);
 
   const handleToggleFav = useCallback(async () => {
     if (!code) return;
@@ -329,25 +332,44 @@ export default function StockDetailScreen() {
     ];
   }, [bars, weeklyBars]);
 
-  /**
-   * 屏占比（用户反馈调整：K 线占比要更大）。
-   * 可用高度 = 屏幕高 − 顶部安全区 − 底部安全区（规格 §4.1 口径）。
-   * 竖屏分配：标题行 48 + 价格区 60 + 选项行 40 + 图表区(剩余最大) + 速览带 118 + 状态条 22。
-   * K 线主图 : 副图 维持 3.4 : 1（规格硬约束 S37）。
-   */
-  const availH = winH - insets.top - insets.bottom;
-  const TITLE_H = landscape ? 40 : 48;
   const PRICE_H = landscape ? 0 : 60;
   const OPT_H = landscape ? 36 : 40;
   const STRIP_H = landscape ? 56 : 118;
   const STATUS_H = landscape ? 0 : 22;
-  const chartTotalH = Math.max(
-    landscape ? 180 : 300,
-    availH - TITLE_H - PRICE_H - OPT_H - STRIP_H - STATUS_H - 16
-  );
-  // 小屏（可用高度 <660pt）内容可能溢出，此时允许滚动兜底；
-  // 常规机型内容刚好一屏，禁用滚动以免干扰图表手势（问题3）
-  const needScroll = availH < 660;
+
+  /**
+   * 屏占比（问题1修复：底部被遮挡且无法下滑）。
+   *
+   * 旧实现的两个硬伤：
+   *   ① 图表高度用 `availH`（屏高−安全区）减固定块算出来，但没算卡片内边距(16)、
+   *      速览带 marginTop(12)、状态条 marginTop+height(30)、contentContainer paddingBottom
+   *      这些零碎 —— 内容高度恒定比视口多 **38pt**，最后一截永远被切掉。
+   *   ② `scrollEnabled` 绑在 `availH < 660` 这个硬阈值上，常规机型一律禁用滚动，
+   *      于是被切掉的部分**既看不到也滑不到**。
+   *
+   * 新实现：用 onLayout 实测滚动视口高度，把「除图表外的所有高度」显式累加成 CHROME_H，
+   * 图表吃满剩余空间；只有当剩余空间小于 MIN_CHART_H（小屏/横屏）时才启用滚动兜底。
+   * 这样常规机型是**精确一屏、不滚动**（不干扰图表手势），小屏才滚动。
+   */
+  const MIN_CHART_H = landscape ? 200 : 300;
+  // 除图表外的固定高度（与下面 JSX 里实际用的间距/高度一一对应，改布局要同步改这里）
+  const CHROME_H =
+    PRICE_H +                                    // 价格区
+    OPT_H +                                      // 选项行
+    16 +                                         // chartCard 上下 padding 8+8
+    (landscape ? 0 : 12) +                       // stripWrap marginTop
+    STRIP_H +                                    // 指标速览带
+    (landscape ? 0 : 8 + STATUS_H) +             // 状态条 marginTop + 高度
+    16 +                                         // contentContainer paddingBottom 基础值
+    insets.bottom;                               // 底部安全区
+  // viewportH 首帧为 0，用估算值兜底（标题行实测约 44pt），避免闪一下错误高度。
+  // 注意：滚动区一直延伸到底边，底部安全区是靠 contentContainer 的 paddingBottom 留的，
+  // 所以估算里**不能**再减 insets.bottom，否则首帧会矮一截。
+  const vh = viewportH || Math.max(240, winH - insets.top - 44);
+  const fittedChartH = vh - CHROME_H;
+  const chartTotalH = Math.max(MIN_CHART_H, Math.round(fittedChartH));
+  // 只有「塞不下」才允许滚动；塞得下时禁用，避免与图表横滑手势抢事件
+  const needScroll = fittedChartH < MIN_CHART_H;
   // 主图:副图 = 3.4:1（规格 S37 硬约束）
   const subH = Math.round(chartTotalH / 4.4);
   const chartW = winW - 16 * 2 - 8;
@@ -428,7 +450,11 @@ export default function StockDetailScreen() {
         style={styles.scroll}
         contentContainerStyle={[styles.scrollContent, { paddingBottom: 16 + insets.bottom }]}
         scrollEnabled={needScroll}
-        showsVerticalScrollIndicator={false}
+        showsVerticalScrollIndicator={needScroll}
+        onLayout={(e) => {
+          const h = Math.round(e.nativeEvent.layout.height);
+          setViewportH((prev) => (Math.abs(prev - h) > 0.5 ? h : prev));
+        }}
       >
         {/* ② 价格区（横屏已并入标题行） */}
         {!landscape ? (

@@ -22,6 +22,16 @@ export interface DownloadResult {
 }
 
 /**
+ * 会话级「刚拉过」记忆。
+ * `getLastUpdate` 存的是**最后一根 K 线的时间戳**，不是抓取时间：
+ * 周线/月线的最新 bar 可能是本周一/本月 1 号，永远不等于今天，
+ * 于是 `isSameDay` 永远不成立 → 每切一次周期就重拉一次周线/月线。
+ * 这里用内存表兜住，5 分钟内同一 code+period 不重复请求。
+ */
+const fetchedAt = new Map<string, number>();
+const SESSION_TTL_MS = 5 * 60 * 1000;
+
+/**
  * 下载单只股票某周期的 K 线并落库。
  *
  * @param incremental 增量模式：本地已有数据时，只补最新部分并覆盖（默认 true）。
@@ -34,20 +44,31 @@ export async function downloadKlines(
   incremental = true
 ): Promise<DownloadResult> {
   try {
+    const key = `${code}:${period}`;
     if (incremental) {
       const last = await getLastUpdate(code, period);
-      // 已有数据且今天更新过 → 跳过（行情当日不会变）
-      if (last !== null && isSameDay(last * 1000, Date.now())) {
+      const justFetched = Date.now() - (fetchedAt.get(key) ?? 0) < SESSION_TTL_MS;
+      // 已有数据且（今天更新过 或 本会话刚拉过）→ 跳过（行情当日不会变）
+      if (last !== null && (justFetched || isSameDay(last * 1000, Date.now()))) {
         const cached = await loadKlines(code, period, 100000);
-        return { code, period, fetched: 0, cached: cached.length, ok: true };
+        if (cached.length > 0) {
+          return { code, period, fetched: 0, cached: cached.length, ok: true };
+        }
       }
     }
 
     const bars = await fetchKlines(code, period, limit);
     if (bars.length === 0) {
+      // 接口返回空：若本地本来就有数据，不能因此把这只股票判成「失败」——
+      // 全量下载的 fetchOne 会据此把股票标记为未完成、断点反复重试。
+      const cachedRows = await loadKlines(code, period, 100000);
+      if (cachedRows.length > 0) {
+        return { code, period, fetched: 0, cached: cachedRows.length, ok: true };
+      }
       return { code, period, fetched: 0, cached: 0, ok: false, error: '接口返回空数据' };
     }
     await saveKlines(code, period, bars);
+    fetchedAt.set(key, Date.now());
     const cached = await loadKlines(code, period, 100000);
     return { code, period, fetched: bars.length, cached: cached.length, ok: true };
   } catch (e) {
@@ -84,6 +105,7 @@ export async function downloadBatch(
 
 /**
  * 下载多周期（60分钟/日/周/月）——详情页「下载」按钮用。
+ * 这是显式动作，强制重拉（incremental=false），不能因为"今天已经更新过"就跳过。
  */
 export async function downloadAllPeriods(
   code: string,
@@ -92,7 +114,7 @@ export async function downloadAllPeriods(
   const periods: KlinePeriod[] = ['60min', 'daily', 'weekly', 'monthly'];
   const out: DownloadResult[] = [];
   for (const p of periods) {
-    out.push(await downloadKlines(code, p, limit));
+    out.push(await downloadKlines(code, p, limit, false));
     await sleep(120);
   }
   return out;
@@ -133,4 +155,56 @@ export async function getKlinesWithFallback(
   const r = await downloadKlines(code, period, limit);
   if (!r.ok) return cached;
   return loadKlines(code, period, limit);
+}
+
+/* ------------------------------------------------------------------ *
+ * 个股「打开即后台更新」（用户需求3）
+ *
+ * 点开个股后静默把该股 4 个周期都补/更新一遍，不阻塞界面、不弹任何提示。
+ * · 同一只股票同时只跑一次（快速连点左右箭头切股时不会叠加请求）
+ * · 复用 downloadKlines 的 incremental 逻辑：当天已更新过的周期直接跳过，
+ *   所以已全量下载过的股票打开时几乎零网络开销
+ * · 单周期失败不影响其它周期
+ * ------------------------------------------------------------------ */
+
+const refreshInflight = new Map<string, Promise<boolean>>();
+
+/**
+ * 后台刷新某只股票的全部周期。
+ * @returns 是否**确实有新数据写入**（true 时调用方可以重绘图表）
+ */
+export function refreshStockKlines(code: string, dailyLimit = 800): Promise<boolean> {
+  const running = refreshInflight.get(code);
+  if (running) return running;
+
+  const job = (async (): Promise<boolean> => {
+    let changed = false;
+    const plan: { p: KlinePeriod; n: number }[] = [
+      { p: 'daily', n: dailyLimit },
+      { p: '60min', n: Math.min(dailyLimit, 400) },
+      { p: 'weekly', n: 300 },
+      { p: 'monthly', n: 240 },
+    ];
+    for (const { p, n } of plan) {
+      try {
+        const r = await downloadKlines(code, p, n, true);
+        if (r.ok && r.fetched > 0) changed = true;
+      } catch {
+        /* 单个周期失败：保持已有本地数据，继续下一个周期 */
+      }
+      await sleep(80); // 礼貌间隔，避免连点切股时打爆接口
+    }
+    return changed;
+  })();
+
+  refreshInflight.set(code, job);
+  void job.finally(() => {
+    if (refreshInflight.get(code) === job) refreshInflight.delete(code);
+  });
+  return job;
+}
+
+/** 某只股票是否正在后台刷新（UI 可选展示小菊花用） */
+export function isRefreshing(code: string): boolean {
+  return refreshInflight.has(code);
 }

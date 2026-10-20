@@ -1,7 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { downloadKlines } from '@/lib/kline-downloader';
-import { dbStats } from '@/lib/kline-db';
+import { codesWithBars, dbStats, getBarCount } from '@/lib/kline-db';
 import type { Stock } from '@/types/stock';
 
 /**
@@ -121,8 +121,21 @@ export async function startFullDownload(stocks: Stock[], opts?: { background?: b
   notify();
 
   const doneSet = await loadDoneSet();
+  const alreadyHad = stocks.length - stocks.filter((s) => !doneSet.has(s.code)).length;
+
+  // 🔴 问题2修复②：断点自愈。
+  // 旧版 fetchOne 不看返回值，接口抽风的股票会被写进 doneSet，此后断点续传永远跳过它。
+  // 这里用「本地确实有日线」来校验断点，把误标记录清掉，用户重新点下载就能补上。
+  if (doneSet.size > 0) {
+    const have = new Set(await codesWithBars('daily'));
+    let pruned = 0;
+    for (const c of [...doneSet]) {
+      if (!have.has(c)) { doneSet.delete(c); pruned++; }
+    }
+    if (pruned > 0) await saveDoneSet(doneSet);
+  }
+
   const todo = stocks.filter((s) => !doneSet.has(s.code));
-  const alreadyHad = stocks.length - todo.length;
 
   if (todo.length === 0) {
     // 问题1修复②：全部已下载时不再静默返回，而是给出明确的「已是最新」反馈。
@@ -157,17 +170,27 @@ export async function startFullDownload(stocks: Stock[], opts?: { background?: b
       let ok = false;
       for (let attempt = 0; attempt <= RETRY_DELAYS.length; attempt++) {
         try {
-          await downloadKlines(code, p, n);
-          ok = true;
-          break;
-        } catch {
+          // 🔴 问题2修复：原实现只 `await downloadKlines(...)` 不看返回值，
+          //    downloadKlines 在「接口返回空数据」时是 **返回 ok:false 而不抛错**，
+          //    于是接口抽风的那只股票照样被记进 doneSet，断点续传以后也不会再补，
+          //    用户点开就永远提示「需要下载」。这里必须校验 r.ok。
+          const r = await downloadKlines(code, p, n);
+          if (r.ok && r.cached > 0) {
+            ok = true;
+            break;
+          }
+          throw new Error(r.error ?? '本地无有效数据');
+        } catch (e) {
           if (attempt < RETRY_DELAYS.length) await sleep(RETRY_DELAYS[attempt]);
+          else void e;
         }
       }
       if (!ok) return false;
       await sleep(GAP_MS); // 礼貌访问间隔
     }
-    return true;
+    // 三道校验：日线必须真的落库了，否则不算完成（断点下次还会重试）
+    const daily = await getBarCount(code, 'daily');
+    return daily > 0;
   };
 
   // 信号量滑动窗口：每完成一只立即补入下一只

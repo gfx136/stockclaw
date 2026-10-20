@@ -28,7 +28,6 @@ async function getDb(): Promise<SQLite.SQLiteDatabase> {
 async function initSchema(db: SQLite.SQLiteDatabase): Promise<void> {
   await db.execAsync(`
     PRAGMA journal_mode = WAL;
-    PRAGMA user_version = 3;
     CREATE TABLE IF NOT EXISTS kline (
       symbol TEXT NOT NULL,
       period TEXT NOT NULL,
@@ -50,6 +49,63 @@ async function initSchema(db: SQLite.SQLiteDatabase): Promise<void> {
       PRIMARY KEY (symbol, period)
     );
   `);
+
+  // 版本迁移（v4）：清掉历史脏数据。
+  // 旧版 eastmoney.fetchKlines 用 `new Date("2026-10-20 10:30")` 解析分时日期，
+  // 在 iOS 上得到 Invalid Date → ts 写成 NULL。SQLite 的复合主键对 NULL 不去重，
+  // 于是每刷新一次就重复插入一批 60 分钟 K 线。这里一次性清掉，并把 meta 根数校正。
+  const vrow = await db.getFirstAsync<{ user_version: number }>('PRAGMA user_version');
+  const ver = vrow?.user_version ?? 0;
+  if (ver < 4) {
+    await db.execAsync(`
+      DELETE FROM kline WHERE ts IS NULL OR ts <= 0;
+      UPDATE meta SET bars = (
+        SELECT COUNT(*) FROM kline k WHERE k.symbol = meta.symbol AND k.period = meta.period
+      );
+      PRAGMA user_version = 4;
+    `);
+  }
+}
+
+/**
+ * 🔴 写串行化（问题2修复的核心）。
+ *
+ * 全量下载是 **4 并发**（download-manager 的信号量滑动窗口），每个 worker 都会调
+ * saveKlines，而 saveKlines 内部用 `withTransactionAsync` 开事务。
+ *
+ * expo-sqlite 的 `withTransactionAsync` 不是真正的独占事务（官方文档明确提示：
+ * 期间任何其它异步查询都会被卷进同一个事务）。4 个 worker 的 BEGIN/COMMIT 互相
+ * 交错时，一方 ROLLBACK 会把另一方已写入的数据一起回滚 —— 表现为：
+ * 下载进度显示「已完成」，但打开个股发现本地一根 K 线都没有，于是又提示「需要下载」。
+ *
+ * 所以：① 所有写操作走同一条串行队列；② 事务优先用 withExclusiveTransactionAsync；
+ * ③ 顺带用 prepared statement 替代逐条 runAsync（全量 5000 只时速度快一个量级）。
+ */
+let writeChain: Promise<unknown> = Promise.resolve();
+
+function serializeWrite<T>(fn: () => Promise<T>): Promise<T> {
+  const run = writeChain.then(fn, fn);
+  // 让队列不被单次失败卡死
+  writeChain = run.then(
+    () => undefined,
+    () => undefined
+  );
+  return run;
+}
+
+/** 在独占事务里跑（不支持时退回普通事务） */
+async function inTx(
+  db: SQLite.SQLiteDatabase,
+  fn: (conn: SQLite.SQLiteDatabase) => Promise<void>
+): Promise<void> {
+  const anyDb = db as unknown as {
+    withExclusiveTransactionAsync?: (t: (txn: SQLite.SQLiteDatabase) => Promise<void>) => Promise<void>;
+  };
+  if (typeof anyDb.withExclusiveTransactionAsync === 'function') {
+    await anyDb.withExclusiveTransactionAsync(async (txn) => fn(txn ?? db));
+    return;
+  }
+  await db.withTransactionAsync(async () => fn(db));
 }
 
 /** 批量写入 K 线（INSERT OR REPLACE，增量安全） */
@@ -59,21 +115,29 @@ export async function saveKlines(
   bars: KlineBar[]
 ): Promise<void> {
   if (bars.length === 0) return;
-  const db = await getDb();
-  await db.withTransactionAsync(async () => {
-    for (const b of bars) {
-      await db.runAsync(
+  return serializeWrite(async () => {
+    const db = await getDb();
+    await inTx(db, async (conn) => {
+      const stmt = await conn.prepareAsync(
         `INSERT OR REPLACE INTO kline (symbol, period, ts, date, o, h, l, c, v)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [symbol, period, b.ts, b.date, b.open, b.high, b.low, b.close, b.volume]
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
       );
-    }
-    const latest = bars[bars.length - 1];
-    await db.runAsync(
-      `INSERT OR REPLACE INTO meta (symbol, period, updatedAt, bars)
-       VALUES (?, ?, ?, (SELECT COUNT(*) FROM kline WHERE symbol=? AND period=?))`,
-      [symbol, period, latest.ts, symbol, period]
-    );
+      try {
+        for (const b of bars) {
+          await stmt.executeAsync([
+            symbol, period, b.ts, b.date, b.open, b.high, b.low, b.close, b.volume,
+          ]);
+        }
+      } finally {
+        await stmt.finalizeAsync();
+      }
+      const latest = bars[bars.length - 1];
+      await conn.runAsync(
+        `INSERT OR REPLACE INTO meta (symbol, period, updatedAt, bars)
+         VALUES (?, ?, ?, (SELECT COUNT(*) FROM kline WHERE symbol=? AND period=?))`,
+        [symbol, period, latest.ts, symbol, period]
+      );
+    });
   });
 }
 
@@ -226,6 +290,16 @@ export function multiPeriodProvider(
   return (code, period = 'daily') => maps[period]?.get(code);
 }
 
+/** 已缓存 K 线的股票代码集合（走 meta，比 DISTINCT 扫 kline 表快得多） */
+export async function codesWithBars(period: KlinePeriod = 'daily'): Promise<string[]> {
+  const db = await getDb();
+  const rows = await db.getAllAsync<{ symbol: string }>(
+    `SELECT symbol FROM meta WHERE period = ? AND bars > 0`,
+    [period]
+  );
+  return rows.map((r) => r.symbol);
+}
+
 /** 已缓存 K 线的股票代码集合 */
 export async function cachedCodes(period: KlinePeriod = 'daily'): Promise<string[]> {
   const db = await getDb();
@@ -259,26 +333,30 @@ export async function deleteKlines(
   symbol: string,
   period?: KlinePeriod
 ): Promise<void> {
-  const db = await getDb();
-  if (period) {
-    await db.withTransactionAsync(async () => {
-      await db.runAsync(`DELETE FROM kline WHERE symbol = ? AND period = ?`, [symbol, period]);
-      await db.runAsync(`DELETE FROM meta  WHERE symbol = ? AND period = ?`, [symbol, period]);
-    });
-  } else {
-    await db.withTransactionAsync(async () => {
-      await db.runAsync(`DELETE FROM kline WHERE symbol = ?`, [symbol]);
-      await db.runAsync(`DELETE FROM meta  WHERE symbol = ?`, [symbol]);
-    });
-  }
+  return serializeWrite(async () => {
+    const db = await getDb();
+    if (period) {
+      await inTx(db, async (conn) => {
+        await conn.runAsync(`DELETE FROM kline WHERE symbol = ? AND period = ?`, [symbol, period]);
+        await conn.runAsync(`DELETE FROM meta  WHERE symbol = ? AND period = ?`, [symbol, period]);
+      });
+    } else {
+      await inTx(db, async (conn) => {
+        await conn.runAsync(`DELETE FROM kline WHERE symbol = ?`, [symbol]);
+        await conn.runAsync(`DELETE FROM meta  WHERE symbol = ?`, [symbol]);
+      });
+    }
+  });
 }
 
 /** 清空全部 K 线缓存 */
 export async function clearAllKlines(): Promise<void> {
-  const db = await getDb();
-  await db.withTransactionAsync(async () => {
-    await db.runAsync(`DELETE FROM kline`);
-    await db.runAsync(`DELETE FROM meta`);
+  return serializeWrite(async () => {
+    const db = await getDb();
+    await inTx(db, async (conn) => {
+      await conn.runAsync(`DELETE FROM kline`);
+      await conn.runAsync(`DELETE FROM meta`);
+    });
   });
 }
 
@@ -325,10 +403,12 @@ export async function perPeriodStats(): Promise<PeriodStat[]> {
 
 /** 按周期删除本地数据（二次确认后调用；下次下载重新补齐） */
 export async function deleteByPeriod(period: KlinePeriod): Promise<void> {
-  const db = await getDb();
-  await db.withTransactionAsync(async () => {
-    await db.runAsync(`DELETE FROM kline WHERE period = ?`, [period]);
-    await db.runAsync(`DELETE FROM meta WHERE period = ?`, [period]);
+  return serializeWrite(async () => {
+    const db = await getDb();
+    await inTx(db, async (conn) => {
+      await conn.runAsync(`DELETE FROM kline WHERE period = ?`, [period]);
+      await conn.runAsync(`DELETE FROM meta WHERE period = ?`, [period]);
+    });
   });
 }
 
