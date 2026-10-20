@@ -72,6 +72,30 @@ dispatch() {
   api_post "/repos/$REPO/actions/workflows/$WORKFLOW/dispatches" '{"ref":"main"}' >/dev/null
 }
 
+# 触发后等待新 run 出现，返回其 id（避免"还没出现就下一轮"导致反复重试旧 run）
+dispatch_and_wait() {
+  local before_id="$1" tries=0 rid
+  dispatch
+  # 最多等 60 秒让新 run 出现在列表里
+  while [ "$tries" -lt 12 ]; do
+    sleep 5
+    tries=$((tries + 1))
+    rid=$(api "/repos/$REPO/actions/runs?per_page=1" | python -c "
+import sys, json
+try:
+    print(json.load(sys.stdin)['workflow_runs'][0]['id'])
+except Exception:
+    print('0')
+")
+    if [ -n "$rid" ] && [ "$rid" != "0" ] && [ "$rid" != "$before_id" ]; then
+      log "新 run 已创建: $rid"
+      return 0
+    fi
+  done
+  log "⚠️ 等待 60 秒仍未看到新 run（可能 dispatch 被限流）"
+  return 1
+}
+
 download_ipa() { # download_ipa <run_id>
   local rid="$1" url tmp
   url=$(api "/repos/$REPO/actions/runs/$rid/artifacts" | python -c "
@@ -104,6 +128,7 @@ except Exception:
 
 main() {
   local round rid status concl created steps age_min
+  local last_handled=""   # 已处理过的 run id（防止对同一 run 反复 dispatch）
 
   for round in $(seq 1 "$MAX_ROUNDS"); do
     log "── 第 $round/$MAX_ROUNDS 轮 ──"
@@ -112,6 +137,18 @@ main() {
     if [ "$rid" = "0" ]; then
       log "读取 run 列表失败（网络？），稍后重试"
       sleep "$POLL_SEC"; continue
+    fi
+
+    # 同一个 run 已经处理过 → 只等待，不再重复 dispatch
+    if [ "$rid" = "$last_handled" ] && [ "$status" = "queued" ]; then
+      age_min=$(python -c "
+from datetime import datetime, timezone
+c = datetime.fromisoformat('$created'.replace('Z','+00:00'))
+print(int((datetime.now(timezone.utc) - c).total_seconds() / 60))
+")
+      log "run $rid 排队中（${age_min} 分钟），继续等待…"
+      sleep "$POLL_SEC"
+      continue
     fi
 
     # 已成功 → 下载交付
@@ -134,10 +171,12 @@ print(int((datetime.now(timezone.utc) - c).total_seconds() / 60))
       if [ "$status" = "queued" ] && [ "$age_min" -ge "$QUEUE_LIMIT_MIN" ]; then
         log "已排队 ${age_min} 分钟（超过 ${QUEUE_LIMIT_MIN} 分钟），取消并重新触发"
         api_post "/repos/$REPO/actions/runs/$rid/cancel" >/dev/null
-        sleep 8
-        dispatch; sleep 15
+        sleep 10
+        last_handled=""
+        if dispatch_and_wait "$rid"; then last_handled=""; fi
       else
         log "run $rid 状态=$status（排队 ${age_min} 分钟），继续等待…"
+        last_handled="$rid"
         sleep "$POLL_SEC"
       fi
       continue
@@ -147,12 +186,14 @@ print(int((datetime.now(timezone.utc) - c).total_seconds() / 60))
     steps=$(job_steps "$rid")
     if [ "$steps" = "0" ]; then
       log "run $rid 结论=$concl 但步骤数=0 → 排队被回收（非编译错误），重新触发"
+      last_handled=""
+      if dispatch_and_wait "$rid"; then :; fi
     else
       log "⚠️ run $rid 结论=$concl 且跑了 $steps 个步骤 → 可能是真的编译失败，请查看日志"
       log "   链接: https://github.com/$REPO/actions/runs/$rid"
-      sleep 5
+      last_handled="$rid"
+      sleep 10
     fi
-    dispatch; sleep 15
   done
 
   log "❌ 已达最大轮数仍未成功，请手动检查"
