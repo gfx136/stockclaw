@@ -19,9 +19,11 @@ jobs:
     #         but the installed version is 6.0.0
     #     Swift 6.2 只在 Xcode 26+ 提供 → Xcode 16.2(6.0) / 16.4(6.1) 都不够。
     #   ⇒ 必须选 Xcode 26.x，所以锁 16.4 是错的，改为"取最新的 Xcode 26"。
-    #   · 容量：macos-15/latest 共享池拥挤，排队满 15 分钟会被系统取消（runner 为空、
-    #     步骤数 0）。这不是编译错误，配合 scripts/retry-ipa.sh 反复撞窗口即可。
-    runs-on: macos-latest
+    #   · 容量（2026-10-21 探针实测，关键！）：
+    #     `macos-latest` 这个别名单独排一个队，实测连续 13 次都是排队满 15 分钟
+    #     被取消（runner 为空、steps=[]）；而同一时刻 `macos-15` 的探针 job
+    #     **5 秒就拿到机器并跑完**。所以标签必须写死的 `macos-15`，不要用 latest。
+    runs-on: macos-15
     timeout-minutes: 45
     steps:
       - name: Checkout this repo
