@@ -1,8 +1,8 @@
 name: Probe macOS runners
 
 # 轻量探针：同时向多个 macOS runner 标签投递极短任务，
-# 用于判断哪个标签的容量池当前可用（macos-latest 通常最挤）。
-# 每个任务 timeout 3 分钟，快速失败，成本极低。
+# 用于判断 (1) 哪个标签的容量池当前可用 (2) 各标签实际装了哪些 Xcode。
+# 每个任务 timeout 3 分钟，快速失败，public 仓库 Actions 分钟数免费。
 on:
   workflow_dispatch:
 
@@ -11,12 +11,23 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runner: [macos-13, macos-14, macos-15, macos-latest]
+        runner: [macos-14, macos-15, macos-latest, macos-26]
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 3
     steps:
-      - name: Report availability
+      - name: Report availability and toolchain
         run: |
           echo "runner=${{ matrix.runner }}"
           sw_vers
+          echo "--- installed Xcode ---"
+          ls -d /Applications/Xcode*.app 2>/dev/null || echo "none"
+          echo "--- default ---"
+          xcodebuild -version || true
+          echo "--- swift ---"
+          swift --version || true
           echo "✅ 该标签可用"
+
+# 判别方法：
+#   · 任务在 1 分钟内进入 in_progress → 该标签当前有容量
+#   · 卡在 queued 直到 15 分钟被取消（steps=[]、runner 为空）→ 该标签无容量
+#   · 直接 failure 且报 "label not found" → 该标签不存在
