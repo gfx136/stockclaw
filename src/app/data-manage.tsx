@@ -5,6 +5,8 @@ import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-nati
 import { ThemedText } from '@/components/themed-text';
 import { PeriodColors, semanticColor } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+
 import { useTheme } from '@/hooks/use-theme';
 import { useT } from '@/lib/i18n';
 import { clearAllKlines, deleteByPeriod, dbStats, lastUpdateAt, perPeriodStats, type PeriodStat } from '@/lib/kline-db';
@@ -43,6 +45,7 @@ export default function DataManageScreen() {
   const theme = useTheme();
   const isDark = useColorScheme() === 'dark';
   const { t, tf, lang } = useT();
+  const insets = useSafeAreaInsets();
   const [stats, setStats] = useState<{ totalBars: number; codes: number; bytes: number } | null>(null);
   const [periods, setPeriods] = useState<PeriodStat[]>([]);
   const [lastUpdate, setLastUpdate] = useState<number | null>(null);
@@ -96,7 +99,7 @@ export default function DataManageScreen() {
   return (
     <View style={[styles.container, { backgroundColor: theme.background }]}>
       <Stack.Screen options={{ title: t('dm_title'), headerBackTitle: t('common_back') }} />
-      <ScrollView contentContainerStyle={styles.content}>
+      <ScrollView contentContainerStyle={[styles.content, { paddingBottom: 40 + insets.bottom }]}>
         {/* 总览卡 */}
         <View style={[styles.card, { backgroundColor: theme.backgroundElement }]}>
           <Text style={[styles.cardTitle, { color: theme.text }]}>{t('dm_overview')}</Text>
@@ -154,7 +157,7 @@ function Row({ label, value, theme }: { label: string; value: string; theme: Ret
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  content: { padding: 16, gap: 14, paddingBottom: 40 },
+  content: { padding: 16, gap: 14 },
   card: { borderRadius: 12, padding: 14, gap: 4 },
   cardTitle: { fontSize: 14, fontWeight: '700', marginBottom: 4 },
   row: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 6 },

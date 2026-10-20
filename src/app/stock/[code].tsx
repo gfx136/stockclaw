@@ -426,7 +426,7 @@ export default function StockDetailScreen() {
 
       <ScrollView
         style={styles.scroll}
-        contentContainerStyle={styles.scrollContent}
+        contentContainerStyle={[styles.scrollContent, { paddingBottom: 16 + insets.bottom }]}
         scrollEnabled={needScroll}
         showsVerticalScrollIndicator={false}
       >

@@ -16,6 +16,7 @@ import {
   type RiskReport,
 } from '@/lib/financial-risk';
 import { useT } from '@/lib/i18n';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 /**
  * 财务风险体检页（方案 A）+ 机构评级参考。
@@ -43,6 +44,7 @@ export default function RiskScreen() {
   const isDark = useColorScheme() === 'dark';
   const router = useRouter();
   const { t, tf, lang } = useT();
+  const insets = useSafeAreaInsets();
 
   const code = params.code ?? '';
   const stockName = params.name ? decodeURIComponent(params.name) : code;
@@ -121,7 +123,7 @@ export default function RiskScreen() {
   return (
     <View style={[styles.container, { backgroundColor: theme.background }]}>
       <Stack.Screen options={{ title: t('risk_title') }} />
-      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+      <ScrollView contentContainerStyle={[styles.content, { paddingBottom: 32 + insets.bottom }]} showsVerticalScrollIndicator={false}>
         {/* 顶部：股票 + 安全分 */}
         <View style={[styles.hero, { backgroundColor: theme.backgroundElement }]}>
           <View style={styles.heroTop}>
@@ -253,7 +255,7 @@ export default function RiskScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  content: { padding: 16, paddingBottom: 32, gap: 18 },
+  content: { padding: 16, gap: 18 },
   hero: { borderRadius: 14, padding: 16, gap: 8 },
   heroTop: { flexDirection: 'row', alignItems: 'baseline', gap: 8 },
   stockName: { fontSize: 20, fontWeight: '700', flexShrink: 1 },
