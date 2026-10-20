@@ -8,6 +8,7 @@ import { ThemedText } from '@/components/themed-text';
 import { useTheme } from '@/hooks/use-theme';
 import { fetchAllStocks } from '@/lib/api/failover';
 import { setDetailList } from '@/lib/detail-nav';
+import { useT } from '@/lib/i18n';
 import { loadFavorites, removeFavorite, toggleFavorite } from '@/lib/favorites';
 import type { FavoriteItem, Stock } from '@/types/stock';
 
@@ -18,6 +19,7 @@ import type { FavoriteItem, Stock } from '@/types/stock';
  */
 export default function FavoritesScreen() {
   const theme = useTheme();
+  const { t, tf } = useT();
   const router = useRouter();
   const [favorites, setFavorites] = useState<FavoriteItem[]>([]);
   const [quotes, setQuotes] = useState<Record<string, Stock>>({});
@@ -60,10 +62,10 @@ export default function FavoritesScreen() {
 
   /** 长按删除（二次确认） */
   const handleLongPress = useCallback((s: Stock) => {
-    Alert.alert('移除自选', `确定移除 ${s.name}？`, [
-      { text: '取消', style: 'cancel' },
+    Alert.alert(t('fav_removeConfirm'), tf('fav_removeDesc', { name: s.name }), [
+      { text: t('common_cancel'), style: 'cancel' },
       {
-        text: '移除',
+        text: t('common_remove'),
         style: 'destructive',
         onPress: async () => {
           await removeFavorite(s.code);
@@ -83,7 +85,7 @@ export default function FavoritesScreen() {
       <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]} edges={['top']}>
         <View style={styles.center}>
           <ThemedText type="small" themeColor="textSecondary" style={styles.emptyText}>
-            还没有自选股票，{'\n'}在列表页点右侧星标加入。
+            {t('fav_empty')}
           </ThemedText>
         </View>
       </SafeAreaView>
@@ -94,7 +96,7 @@ export default function FavoritesScreen() {
     <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]} edges={['top']}>
       <View style={styles.headRow}>
         <ThemedText type="code" themeColor="textSecondary">
-          {favorites.length} 只自选 · 长按可移除
+          {tf('fav_countHint', { n: favorites.length })}
         </ThemedText>
         {loading ? <ActivityIndicator size="small" /> : null}
       </View>

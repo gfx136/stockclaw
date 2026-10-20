@@ -6,6 +6,7 @@ import { ThemedText } from '@/components/themed-text';
 import { PeriodColors, semanticColor } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useTheme } from '@/hooks/use-theme';
+import { useT } from '@/lib/i18n';
 import { clearAllKlines, deleteByPeriod, dbStats, lastUpdateAt, perPeriodStats, type PeriodStat } from '@/lib/kline-db';
 import type { KlinePeriod } from '@/types/stock';
 
@@ -15,11 +16,11 @@ import type { KlinePeriod } from '@/types/stock';
  * 删除不影响自选/筛选结果/排序偏好（那些存偏好存储，与 K 线库分离）。
  */
 
-const PERIOD_LABEL: Record<KlinePeriod, string> = {
-  '60min': '60分钟',
-  daily: '日线',
-  weekly: '周线',
-  monthly: '月线',
+const PERIOD_LABEL_KEY: Record<KlinePeriod, string> = {
+  '60min': 'dm_period60m',
+  daily: 'dm_periodDaily',
+  weekly: 'dm_periodWeekly',
+  monthly: 'dm_periodMonthly',
 };
 
 /** 周期固定色标（§6.3：便于与图表周期切换对照），取自全局 PeriodColors */
@@ -41,6 +42,7 @@ function fmtTime(ts: number | null): string {
 export default function DataManageScreen() {
   const theme = useTheme();
   const isDark = useColorScheme() === 'dark';
+  const { t, tf, lang } = useT();
   const [stats, setStats] = useState<{ totalBars: number; codes: number; bytes: number } | null>(null);
   const [periods, setPeriods] = useState<PeriodStat[]>([]);
   const [lastUpdate, setLastUpdate] = useState<number | null>(null);
@@ -57,10 +59,10 @@ export default function DataManageScreen() {
 
   const onDeletePeriod = (p: PeriodStat) => {
     Alert.alert(
-      `删除本地${PERIOD_LABEL[p.period]}数据`,
-      `将删除本地${PERIOD_LABEL[p.period]}数据（${p.codes} 只股票）。删除后下次下载会重新补齐；联网模式不受影响。`,
+      tf('dm_deleteConfirmTitle', { period: t(PERIOD_LABEL_KEY[p.period] as never) }),
+      tf('dm_deleteConfirmDesc', { period: t(PERIOD_LABEL_KEY[p.period] as never), n: p.codes }),
       [
-        { text: '取消', style: 'cancel' },
+        { text: t('common_cancel'), style: 'cancel' },
         {
           text: '删除',
           style: 'destructive',
@@ -75,12 +77,12 @@ export default function DataManageScreen() {
 
   const onClearAll = () => {
     Alert.alert(
-      '清空全部',
-      `将移除此页全部 ${stats?.codes ?? 0} 只股票的本地 K 线数据。删除后下次下载会重新补齐；联网模式不受影响。`,
+      t('dm_clearConfirmTitle'),
+      tf('dm_clearConfirmDesc', { n: stats?.codes ?? 0 }),
       [
-        { text: '取消', style: 'cancel' },
+        { text: t('common_cancel'), style: 'cancel' },
         {
-          text: '删除全部',
+          text: t('dm_clearConfirmBtn'),
           style: 'destructive',
           onPress: async () => {
             await clearAllKlines();
@@ -93,30 +95,30 @@ export default function DataManageScreen() {
 
   return (
     <View style={[styles.container, { backgroundColor: theme.background }]}>
-      <Stack.Screen options={{ title: '本地数据管理', headerBackTitle: '返回' }} />
+      <Stack.Screen options={{ title: t('dm_title'), headerBackTitle: t('common_back') }} />
       <ScrollView contentContainerStyle={styles.content}>
         {/* 总览卡 */}
         <View style={[styles.card, { backgroundColor: theme.backgroundElement }]}>
-          <Text style={[styles.cardTitle, { color: theme.text }]}>总览</Text>
-          <Row label="数据库" value="klines.db（App 私有目录）" theme={theme} />
-          <Row label="总占用" value={stats ? fmtBytes(stats.bytes) : '—'} theme={theme} />
-          <Row label="股票只数" value={stats ? `${stats.codes}` : '—'} theme={theme} />
-          <Row label="总 K 线根数" value={stats ? stats.totalBars.toLocaleString() : '—'} theme={theme} />
-          <Row label="最后更新" value={fmtTime(lastUpdate)} theme={theme} />
+          <Text style={[styles.cardTitle, { color: theme.text }]}>{t('dm_overview')}</Text>
+          <Row label={t('dm_database')} value={t('dm_databasePath')} theme={theme} />
+          <Row label={t('dm_totalSize')} value={stats ? fmtBytes(stats.bytes) : '—'} theme={theme} />
+          <Row label={t('dm_stockCount')} value={stats ? `${stats.codes}` : '—'} theme={theme} />
+          <Row label={t('dm_totalBars')} value={stats ? stats.totalBars.toLocaleString() : '—'} theme={theme} />
+          <Row label={t('dm_lastUpdate')} value={fmtTime(lastUpdate)} theme={theme} />
         </View>
 
         {/* 分周期表 */}
         <View style={[styles.card, { backgroundColor: theme.backgroundElement }]}>
-          <Text style={[styles.cardTitle, { color: theme.text }]}>分周期</Text>
+          <Text style={[styles.cardTitle, { color: theme.text }]}>{t('dm_byPeriod')}</Text>
           {periods.map((p) => (
             <View key={p.period} style={[styles.periodRow, { borderBottomColor: theme.border }]}>
               <View style={styles.periodInfo}>
                 <View style={styles.periodNameRow}>
                   <View style={[styles.periodSwatch, { backgroundColor: PERIOD_COLOR[p.period] }]} />
-                  <Text style={[styles.periodName, { color: theme.text }]}>{PERIOD_LABEL[p.period]}</Text>
+                  <Text style={[styles.periodName, { color: theme.text }]}>{t(PERIOD_LABEL_KEY[p.period] as never)}</Text>
                 </View>
                 <Text style={[styles.periodMeta, { color: theme.textSecondary }]}>
-                  {p.codes} 只 · {p.bars.toLocaleString()} 根 · {fmtTime(p.lastUpdate)}
+                  {lang === 'en' ? `${p.codes} stocks · ${p.bars.toLocaleString()} bars` : `${p.codes} 只 · ${p.bars.toLocaleString()} 根`} · {fmtTime(p.lastUpdate)}
                 </Text>
               </View>
               <Pressable onPress={() => onDeletePeriod(p)} hitSlop={6} disabled={p.codes === 0}>
@@ -129,12 +131,12 @@ export default function DataManageScreen() {
         {/* 清空全部 */}
         <Pressable onPress={onClearAll}>
           <View style={[styles.clearBtn, { backgroundColor: theme.backgroundElement }]}>
-            <Text style={[styles.clearText, { color: semanticColor('danger', isDark) }]}>清空全部</Text>
+            <Text style={[styles.clearText, { color: semanticColor('danger', isDark) }]}>{t('dm_clearAll')}</Text>
           </View>
         </Pressable>
 
         <ThemedText type="code" themeColor="textSecondary" style={styles.note}>
-          删除不可撤销，但不影响自选、筛选结果与排序偏好（这些与 K 线库分离存储）。
+          {t('dm_note')}
         </ThemedText>
       </ScrollView>
     </View>

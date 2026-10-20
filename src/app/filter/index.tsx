@@ -17,6 +17,7 @@ import { CapTierPicker, ExclusionPicker, SectionTitle } from '@/components/filte
 import { RulePicker } from '@/components/rule-picker';
 import { ThemedText } from '@/components/themed-text';
 import { useTheme } from '@/hooks/use-theme';
+import { useT } from '@/lib/i18n';
 import { fetchAllStocks } from '@/lib/api/failover';
 import { loadFavorites } from '@/lib/favorites';
 import { filterStocks, hasAnyRules, type KlineProvider } from '@/lib/filter-engine';
@@ -32,6 +33,7 @@ import type { FilterSet, KlinePeriod, MarketCapTier } from '@/types/stock';
  */
 export default function FilterScreen() {
   const theme = useTheme();
+  const { t, tf } = useT();
   const router = useRouter();
 
   const storeState = useSyncExternalStore(subscribeFilter, getFilterState, getFilterState);
@@ -66,11 +68,11 @@ export default function FilterScreen() {
 
   const run = useCallback(async () => {
     setFilterRunning(true);
-    setMsg('正在筛选股票…');
+    setMsg(t('filter_running'));
     try {
       const stocks = await fetchAllStocks(200);
       if (stocks.length === 0) {
-        setMsg('未取到行情数据，请检查网络。');
+        setMsg(t('filter_noData'));
         return;
       }
       // 仅自选时需要自选集合
@@ -88,19 +90,19 @@ export default function FilterScreen() {
         provider = multiPeriodProvider(maps);
         const missing = [...periods].filter((p) => (maps[p]?.size ?? 0) === 0);
         if (missing.length > 0) {
-          const label = missing.map((p) => ({ '60min': '60分钟', daily: '日线', weekly: '周线', monthly: '月线' }[p])).join('/');
-          setMsg(`本地还没有${label} K 线缓存。请先到个股详情页下载对应周期。`);
+          const label = missing.map((p) => t(({ '60min': 'filter_period60m', daily: 'filter_periodDaily', weekly: 'filter_periodWeekly', monthly: 'filter_periodMonthly' } as Record<string, string>)[p] as never)).join('/');
+          setMsg(tf('filter_missingZh', { label }));
         }
       }
 
       const out = filterStocks(stocks, filter, provider, 300, favCodes, (scanned, total) => {
-        setMsg(`正在筛选股票… ${scanned}/${total}`);
+        setMsg(tf('filter_runningProgress', { scanned, total }));
       });
       setFilterOutput(out);
       router.back();
       router.navigate('/(tabs)/results');
     } catch (e) {
-      setMsg(e instanceof Error ? e.message : '筛选失败');
+      setMsg(e instanceof Error ? e.message : t('filter_failed'));
     } finally {
       setFilterRunning(false);
     }
@@ -113,13 +115,13 @@ export default function FilterScreen() {
 
   /** 保存为常用条件 */
   const onSaveSet = () => {
-    Alert.prompt?.('保存为常用条件', '输入条件名称', async (name) => {
+    Alert.prompt?.(t('filter_savePreset'), t('filter_presetNamePlaceholder'), async (name) => {
       if (!name?.trim()) return;
       setSavedSets(await saveFilterSet(name.trim(), filter));
     }) ??
       // Android 无 Alert.prompt，用固定名
       (async () => {
-        const name = `条件${savedSets.length + 1}`;
+        const name = tf('filter_presetDefault', { n: savedSets.length + 1 });
         setSavedSets(await saveFilterSet(name, filter));
       })();
   };
@@ -136,14 +138,14 @@ export default function FilterScreen() {
       {/* 顶部：清空 / 标题 / 运行 */}
       <View style={styles.topBar}>
         <Pressable onPress={clearAll} hitSlop={8}>
-          <ThemedText type="small" themeColor="textSecondary">清除条件</ThemedText>
+          <ThemedText type="small" themeColor="textSecondary">{t('filter_clear')}</ThemedText>
         </Pressable>
-        <ThemedText type="smallBold">筛选条件</ThemedText>
+        <ThemedText type="smallBold">{t('filter_title')}</ThemedText>
         <Pressable onPress={run} disabled={running} hitSlop={8}>
           {running ? (
             <ActivityIndicator size="small" />
           ) : (
-            <ThemedText type="smallBold" style={{ color: theme.tint }}>运行筛选</ThemedText>
+            <ThemedText type="smallBold" style={{ color: theme.tint }}>{t('filter_run')}</ThemedText>
           )}
         </Pressable>
       </View>
@@ -152,7 +154,7 @@ export default function FilterScreen() {
         {/* 常用条件 */}
         {savedSets.length > 0 ? (
           <View style={styles.block}>
-            <SectionTitle>常用条件</SectionTitle>
+            <SectionTitle>{t('filter_presets')}</SectionTitle>
             <View style={styles.chipRow}>
               {savedSets.map((s) => (
                 <Pressable key={s.name} onPress={() => applySet(s)} hitSlop={4}>
@@ -167,7 +169,7 @@ export default function FilterScreen() {
 
         {/* 排除条件 */}
         <View style={styles.block}>
-          <SectionTitle hint="勾选即排除">排除条件</SectionTitle>
+          <SectionTitle hint={t('filter_excludeHint')}>{t('filter_exclude')}</SectionTitle>
           <ExclusionPicker
             value={{
               excludeST: filter.excludeST,
@@ -188,7 +190,7 @@ export default function FilterScreen() {
 
         {/* 市值档位 */}
         <View style={styles.block}>
-          <SectionTitle hint="按市值排名分档">市值档位</SectionTitle>
+          <SectionTitle hint={t('filter_capTierHint')}>{t('filter_capTier')}</SectionTitle>
           <CapTierPicker
             value={filter.capTiers}
             onChange={(v) => patch({ capTiers: v as MarketCapTier[] | undefined })}
@@ -197,31 +199,31 @@ export default function FilterScreen() {
 
         {/* 基础面区间 */}
         <View style={styles.block}>
-          <SectionTitle hint="留空表示不限">行情区间</SectionTitle>
-          <RangeInput label="价格(元)" min={filter.priceRange?.min} max={filter.priceRange?.max}
+          <SectionTitle hint={t('filter_leaveBlank')}>{t('filter_marketRange')}</SectionTitle>
+          <RangeInput label={t('filter_price')} min={filter.priceRange?.min} max={filter.priceRange?.max}
             onMin={(v) => patch({ priceRange: { ...filter.priceRange, min: num(v) } })}
             onMax={(v) => patch({ priceRange: { ...filter.priceRange, max: num(v) } })} />
-          <RangeInput label="涨跌幅(%)" min={filter.changeRange?.min} max={filter.changeRange?.max}
+          <RangeInput label={t('filter_change')} min={filter.changeRange?.min} max={filter.changeRange?.max}
             onMin={(v) => patch({ changeRange: { ...filter.changeRange, min: num(v) } })}
             onMax={(v) => patch({ changeRange: { ...filter.changeRange, max: num(v) } })} />
-          <RangeInput label="换手率(%)" min={filter.turnoverRange?.min} max={filter.turnoverRange?.max}
+          <RangeInput label={t('filter_turnover')} min={filter.turnoverRange?.min} max={filter.turnoverRange?.max}
             onMin={(v) => patch({ turnoverRange: { ...filter.turnoverRange, min: num(v) } })}
             onMax={(v) => patch({ turnoverRange: { ...filter.turnoverRange, max: num(v) } })} />
-          <RangeInput label="总市值(万元)" min={filter.marketCapRange?.min !== undefined ? filter.marketCapRange.min / 1e4 : undefined} max={filter.marketCapRange?.max !== undefined ? filter.marketCapRange.max / 1e4 : undefined}
+          <RangeInput label={t('filter_marketCap')} min={filter.marketCapRange?.min !== undefined ? filter.marketCapRange.min / 1e4 : undefined} max={filter.marketCapRange?.max !== undefined ? filter.marketCapRange.max / 1e4 : undefined}
             onMin={(v) => patch({ marketCapRange: { ...filter.marketCapRange, min: num(v) ? num(v)! * 1e4 : undefined } })}
             onMax={(v) => patch({ marketCapRange: { ...filter.marketCapRange, max: num(v) ? num(v)! * 1e4 : undefined } })} />
-          <RangeInput label="流通市值(万元)" min={filter.floatCapRange?.min !== undefined ? filter.floatCapRange.min / 1e4 : undefined} max={filter.floatCapRange?.max !== undefined ? filter.floatCapRange.max / 1e4 : undefined}
+          <RangeInput label={t('filter_floatCap')} min={filter.floatCapRange?.min !== undefined ? filter.floatCapRange.min / 1e4 : undefined} max={filter.floatCapRange?.max !== undefined ? filter.floatCapRange.max / 1e4 : undefined}
             onMin={(v) => patch({ floatCapRange: { ...filter.floatCapRange, min: num(v) ? num(v)! * 1e4 : undefined } })}
             onMax={(v) => patch({ floatCapRange: { ...filter.floatCapRange, max: num(v) ? num(v)! * 1e4 : undefined } })} />
-          <RangeInput label="成交额(万元)" min={filter.amountRange?.min !== undefined ? filter.amountRange.min / 1e4 : undefined} max={filter.amountRange?.max !== undefined ? filter.amountRange.max / 1e4 : undefined}
+          <RangeInput label={t('filter_amount')} min={filter.amountRange?.min !== undefined ? filter.amountRange.min / 1e4 : undefined} max={filter.amountRange?.max !== undefined ? filter.amountRange.max / 1e4 : undefined}
             onMin={(v) => patch({ amountRange: { ...filter.amountRange, min: num(v) ? num(v)! * 1e4 : undefined } })}
             onMax={(v) => patch({ amountRange: { ...filter.amountRange, max: num(v) ? num(v)! * 1e4 : undefined } })} />
-          <RangeInput label="跳空缺口≥(%)" min={filter.gapMin}
+          <RangeInput label={t('filter_gapMin')} min={filter.gapMin}
             onMin={(v) => patch({ gapMin: num(v) })}
             onMax={() => {}} single />
           {/* 仅自选 */}
           <View style={styles.switchRow}>
-            <ThemedText type="small" style={styles.switchLabel}>仅看自选</ThemedText>
+            <ThemedText type="small" style={styles.switchLabel}>{t('filter_onlyFav')}</ThemedText>
             <Switch
               value={filter.onlyFavorites ?? false}
               onValueChange={(v) => patch({ onlyFavorites: v || undefined })}
@@ -231,13 +233,13 @@ export default function FilterScreen() {
 
         {/* 技术指标 */}
         <View style={styles.block}>
-          <SectionTitle hint="AND 组合，可指定周期">技术指标</SectionTitle>
+          <SectionTitle hint={t('filter_indicatorHint')}>{t('filter_indicator')}</SectionTitle>
           <RulePicker
             rules={filter.rules ?? []}
             onChange={(rules) => patch({ rules: rules.length > 0 ? rules : undefined })}
           />
           <ThemedText type="small" themeColor="textSecondary" style={styles.tip}>
-            技术指标判定依赖本地已下载的 K 线；周期上无数据的股票会被跳过并计数。
+            {t('filter_indicatorNote')}
           </ThemedText>
         </View>
 
@@ -245,7 +247,7 @@ export default function FilterScreen() {
         <View style={styles.block}>
           <Pressable onPress={onSaveSet}>
             <View style={[styles.saveBtn, { backgroundColor: theme.backgroundElement }]}>
-              <Text style={[styles.saveBtnText, { color: theme.tint }]}>保存为常用条件</Text>
+              <Text style={[styles.saveBtnText, { color: theme.tint }]}>{t('filter_savePreset')}</Text>
             </View>
           </Pressable>
         </View>
@@ -258,7 +260,7 @@ export default function FilterScreen() {
 
         {hasKlineConds ? (
           <ThemedText type="small" themeColor="textSecondary" style={styles.klineNote}>
-            含技术指标条件，将对已下载 K 线的股票判定。
+            {t('filter_indicatorNote2')}
           </ThemedText>
         ) : null}
       </ScrollView>
@@ -272,17 +274,18 @@ function RangeInput({ label, min, max, onMin, onMax, single }: {
   onMin: (t: string) => void; onMax: (t: string) => void; single?: boolean;
 }) {
   const theme = useTheme();
+  const { t, tf } = useT();
   return (
     <View style={styles.rangeRow}>
       <ThemedText type="small" style={styles.rangeLabel}>{label}</ThemedText>
       <TextInput defaultValue={min !== undefined ? String(min) : ''} onChangeText={onMin}
-        placeholder="最小" placeholderTextColor={theme.textSecondary} keyboardType="numeric"
+        placeholder={t('filter_minPlaceholder')} placeholderTextColor={theme.textSecondary} keyboardType="numeric"
         style={[styles.rangeInput, { backgroundColor: theme.backgroundElement, color: theme.text }]} />
       {!single ? (
         <>
           <ThemedText type="small" themeColor="textSecondary">~</ThemedText>
           <TextInput defaultValue={max !== undefined ? String(max) : ''} onChangeText={onMax}
-            placeholder="最大" placeholderTextColor={theme.textSecondary} keyboardType="numeric"
+            placeholder={t('filter_maxPlaceholder')} placeholderTextColor={theme.textSecondary} keyboardType="numeric"
             style={[styles.rangeInput, { backgroundColor: theme.backgroundElement, color: theme.text }]} />
         </>
       ) : null}

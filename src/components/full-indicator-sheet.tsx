@@ -5,6 +5,7 @@ import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-nati
 import { useTheme } from '@/hooks/use-theme';
 import { semanticColor } from '@/constants/theme';
 import { fmtPrice } from '@/lib/format';
+import { t, tf, useT } from '@/lib/i18n';
 import { indicatorColor } from '@/lib/indicator-palette';
 import type { IndicatorSeries, KlineBar, KlinePeriod } from '@/types/stock';
 
@@ -38,12 +39,17 @@ interface Props {
   onPeriodChange?: (p: KlinePeriod) => void;
 }
 
-const PERIODS: { key: KlinePeriod; label: string }[] = [
-  { key: '60min', label: '60分钟' },
-  { key: 'daily', label: '日' },
-  { key: 'weekly', label: '周' },
-  { key: 'monthly', label: '月' },
+const PERIODS: { key: KlinePeriod; labelKey: string }[] = [
+  { key: '60min', labelKey: 'detail_period60m' },
+  { key: 'daily', labelKey: 'detail_periodDaily' },
+  { key: 'weekly', labelKey: 'detail_periodWeekly' },
+  { key: 'monthly', labelKey: 'detail_periodMonthly' },
 ];
+/** 周期显示名（供复制文本/副标题/页脚共用） */
+function periodLabel(k: KlinePeriod): string {
+  const key = PERIODS.find((p) => p.key === k)?.labelKey;
+  return key ? t(key as never) : String(k);
+}
 
 function fmt(v?: number): string {
   return v === undefined || Number.isNaN(v) ? '—' : v.toFixed(2);
@@ -53,6 +59,7 @@ export function FullIndicatorSheet({
   visible, onClose, stockName, code, period, bars, selIdx, snapshot, bbiRules, isDark = true, onPeriodChange,
 }: Props) {
   const theme = useTheme();
+  useT();
   const [copied, setCopied] = useState(false);
 
   const idx = selIdx !== null && selIdx >= 0 && selIdx < bars.length ? selIdx : bars.length - 1;
@@ -60,15 +67,15 @@ export function FullIndicatorSheet({
   const close = bar?.close ?? 0;
   const s = snapshot ?? {};
 
-  const rel = (v?: number) => (v === undefined ? '—' : close >= v ? '价格 ↑' : '价格 ↓');
+  const rel = (v?: number) => (v === undefined ? '—' : close >= v ? t('sheet_priceUp') : t('sheet_priceDown'));
 
   const onCopy = async () => {
     const lines: string[] = [
-      `${stockName} ${code} · ${PERIODS.find((p) => p.key === period)?.label}`,
-      bar ? `日期: ${bar.date}` : '',
+      `${stockName} ${code} · ${periodLabel(period)}`,
+      bar ? bar.date : '',
       '',
       `[MA] MA5 ${fmt(s.ma5)}  MA10 ${fmt(s.ma10)}  MA20 ${fmt(s.ma20)}  MA26 ${fmt(s.ma26)}  MA60 ${fmt(s.ma60)}`,
-      `[BOLL] 上轨 ${fmt(s.bollUpper)}  中轨 ${fmt(s.bollMid)}  下轨 ${fmt(s.bollLower)}  带宽 ${fmt((s.bollUpper ?? 0) - (s.bollLower ?? 0))}`,
+      `[BOLL] ${t('sheet_upper')} ${fmt(s.bollUpper)}  ${t('sheet_mid')} ${fmt(s.bollMid)}  ${t('sheet_lower')} ${fmt(s.bollLower)}  ${t('sheet_bandwidth')} ${fmt((s.bollUpper ?? 0) - (s.bollLower ?? 0))}`,
       `[MACD] DIF ${fmt(s.dif)}  DEA ${fmt(s.dea)}  柱 ${fmt(s.macdHist)}`,
       `[KDJ] K ${fmt(s.k)}  D ${fmt(s.d)}  J ${fmt(s.j)}`,
       `[RSI] RSI14 ${fmt(s.rsi14)}`,
@@ -103,9 +110,9 @@ export function FullIndicatorSheet({
         <View style={styles.handle} />
         <View style={styles.head}>
           <View style={{ flex: 1 }}>
-            <Text style={[styles.title, { color: theme.text }]}>完整指标数值</Text>
+            <Text style={[styles.title, { color: theme.text }]}>{t('sheet_title')}</Text>
             <Text style={[styles.sub, { color: theme.textSecondary }]}>
-              {stockName} {code} · {PERIODS.find((p) => p.key === period)?.label}{bar ? ` · ${bar.date}` : ''}
+              {stockName} {code} · {periodLabel(period)}{bar ? ` · ${bar.date}` : ''}
             </Text>
           </View>
           <Pressable onPress={onClose} hitSlop={10}>
@@ -120,7 +127,7 @@ export function FullIndicatorSheet({
             return (
               <Pressable key={p.key} onPress={() => onPeriodChange?.(p.key)}>
                 <View style={[styles.periodBtn, { backgroundColor: on ? theme.tint : theme.backgroundElement }]}>
-                  <Text style={[styles.periodText, { color: on ? '#fff' : theme.text }]}>{p.label}</Text>
+                  <Text style={[styles.periodText, { color: on ? '#fff' : theme.text }]}>{t(p.labelKey as never)}</Text>
                 </View>
               </Pressable>
             );
@@ -128,18 +135,18 @@ export function FullIndicatorSheet({
         </View>
 
         <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent}>
-          {group('MA 均线', 'ma20', [
+          {group(t('sheet_maGroup'), 'ma20', [
             { k: 'MA5', v: fmt(s.ma5), note: rel(s.ma5) },
             { k: 'MA10', v: fmt(s.ma10), note: rel(s.ma10) },
             { k: 'MA20', v: fmt(s.ma20), note: rel(s.ma20) },
             { k: 'MA26', v: fmt(s.ma26), note: rel(s.ma26) },
             { k: 'MA60', v: fmt(s.ma60), note: rel(s.ma60) },
           ])}
-          {group('BOLL 布林带 (20, 2σ)', 'boll', [
-            { k: '上轨', v: fmt(s.bollUpper) },
-            { k: '中轨', v: fmt(s.bollMid) },
-            { k: '下轨', v: fmt(s.bollLower) },
-            { k: '带宽', v: fmt((s.bollUpper ?? 0) - (s.bollLower ?? 0)) },
+          {group(`${t('sheet_bollGroup')} (20, 2σ)`, 'boll', [
+            { k: t('sheet_upper'), v: fmt(s.bollUpper) },
+            { k: t('sheet_mid'), v: fmt(s.bollMid) },
+            { k: t('sheet_lower'), v: fmt(s.bollLower) },
+            { k: t('sheet_bandwidth'), v: fmt((s.bollUpper ?? 0) - (s.bollLower ?? 0)) },
             {
               k: '%B',
               v: s.bollUpper !== undefined && s.bollLower !== undefined && s.bollUpper !== s.bollLower
@@ -147,23 +154,23 @@ export function FullIndicatorSheet({
                 : '—',
             },
           ])}
-          {group('MACD (12/26/9)', 'macdDif', [
+          {group(`${t('sheet_macdGroup')} (12/26/9)`, 'macdDif', [
             { k: 'DIF', v: fmt(s.dif) },
             { k: 'DEA', v: fmt(s.dea) },
             { k: '柱值(MACD)', v: fmt(s.macdHist) },
-            { k: '状态', v: (s.macdHist ?? 0) >= 0 ? '柱为正' : '柱为负' },
+            { k: t('sheet_status'), v: (s.macdHist ?? 0) >= 0 ? t('detail_histPositive') : t('detail_histNegative') },
           ])}
-          {group('KDJ (9,3,3)', 'kdjJ', [
+          {group(`${t('sheet_kdjGroup')} (9,3,3)`, 'kdjJ', [
             { k: 'K', v: fmt(s.k) },
             { k: 'D', v: fmt(s.d) },
             { k: 'J', v: fmt(s.j) },
-            { k: '状态', v: (s.j ?? 50) > 100 ? '超买' : (s.j ?? 50) < 0 ? '超卖' : '中性' },
+            { k: t('sheet_status'), v: (s.j ?? 50) > 100 ? t('detail_overbought') : (s.j ?? 50) < 0 ? t('detail_oversold') : t('detail_neutral') },
           ])}
-          {group('RSI(14)', 'rsi', [
+          {group(`${t('sheet_rsiGroup')}(14)`, 'rsi', [
             { k: 'RSI14', v: fmt(s.rsi14) },
-            { k: '状态', v: (s.rsi14 ?? 50) > 70 ? '超买' : (s.rsi14 ?? 50) < 30 ? '超卖' : '中性' },
+            { k: t('sheet_status'), v: (s.rsi14 ?? 50) > 70 ? t('detail_overbought') : (s.rsi14 ?? 50) < 30 ? t('detail_oversold') : t('detail_neutral') },
           ])}
-          {group('BBI (MA3+MA6+MA12+MA24)/4', 'bbi', [
+          {group(`${t('sheet_bbiGroup')} (MA3+MA6+MA12+MA24)/4`, 'bbi', [
             { k: 'BBI', v: fmt(s.bbi) },
             { k: 'MA26', v: fmt(s.ma26) },
           ])}
@@ -171,7 +178,7 @@ export function FullIndicatorSheet({
           {/* BBI 六条规则判定（§5.3） */}
           {bbiRules ? (
             <View style={styles.group}>
-              <Text style={[styles.groupTitle, { color: theme.text }]}>BBI 组规则判定</Text>
+              <Text style={[styles.groupTitle, { color: theme.text }]}>{t('sheet_bbiRules')}</Text>
               {bbiRules.map((r) => (
                 <View key={r.label} style={styles.ruleRow}>
                   <Text style={[styles.rowK, { color: theme.textSecondary, flex: 1 }]} numberOfLines={1}>{r.label}</Text>
@@ -180,7 +187,7 @@ export function FullIndicatorSheet({
                       : r.status === 'no' ? theme.textSecondary
                       : semanticColor('warning', isDark),
                   }]}>
-                    {r.status === 'ok' ? '✅ 满足' : r.status === 'no' ? '❌ 不满足' : `⚠ 数据不足 · 需 ${r.needBars ?? '?'} 根`}
+                    {r.status === 'ok' ? t('sheet_ruleOk') : r.status === 'no' ? t('sheet_ruleNo') : tf('sheet_ruleNoData', { n: r.needBars ?? '?' })}
                   </Text>
                 </View>
               ))}
@@ -188,14 +195,14 @@ export function FullIndicatorSheet({
           ) : null}
 
           <Text style={[styles.footnote, { color: theme.textSecondary }]}>
-            所有指标均按前复权价格计算；数据截至 {bar?.date ?? '—'}；周期 = {PERIODS.find((p) => p.key === period)?.label}。
+            {tf('sheet_footnote', { date: bar?.date ?? '—', period: periodLabel(period) })}
           </Text>
         </ScrollView>
 
         <View style={[styles.footer, { borderTopColor: theme.border }]}>
           <Pressable onPress={onCopy} style={styles.copyBtn}>
             <View style={[styles.copyBtnInner, { backgroundColor: theme.backgroundElement }]}>
-              <Text style={[styles.copyText, { color: theme.tint }]}>{copied ? '已复制指标数值' : '复制全部'}</Text>
+              <Text style={[styles.copyText, { color: theme.tint }]}>{copied ? t('sheet_copied') : t('sheet_copyAll')}</Text>
             </View>
           </Pressable>
         </View>

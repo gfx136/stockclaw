@@ -23,6 +23,7 @@ import { fetchAllStocks } from '@/lib/api/failover';
 import { setDetailList } from '@/lib/detail-nav';
 import { loadFavorites, toggleFavorite } from '@/lib/favorites';
 import { getFilterState, setFilter, subscribeFilter } from '@/lib/filter-store';
+import { useT } from '@/lib/i18n';
 import { isSnapshotFresh, loadListSnapshot } from '@/lib/list-cache';
 import { getHomeSort, setHomeSort, type HomeSortKey } from '@/lib/prefs';
 import { buildPinyinMap } from '@/lib/pinyin-search';
@@ -35,20 +36,21 @@ import type { Stock } from '@/types/stock';
  */
 
 /** 排序选项（规格 §1.4，固定 6 项，无名称排序；除代码外均降序） */
-const SORT_OPTIONS: { key: HomeSortKey; label: string; desc: boolean }[] = [
-  { key: 'code', label: '代码升序', desc: false },
-  { key: 'price', label: '价格降序', desc: true },
-  { key: 'changePercent', label: '涨幅降序', desc: true },
-  { key: 'amount', label: '成交额降序', desc: true },
-  { key: 'turnover', label: '换手率降序', desc: true },
-  { key: 'marketCap', label: '市值降序', desc: true },
+const SORT_OPTIONS: { key: HomeSortKey; labelKey: string; desc: boolean }[] = [
+  { key: 'code', labelKey: 'home_sortCodeAsc', desc: false },
+  { key: 'price', labelKey: 'home_sortPriceDesc', desc: true },
+  { key: 'changePercent', labelKey: 'home_sortChangeDesc', desc: true },
+  { key: 'amount', labelKey: 'home_sortAmountDesc', desc: true },
+  { key: 'turnover', labelKey: 'home_sortTurnoverDesc', desc: true },
+  { key: 'marketCap', labelKey: 'home_sortCapDesc', desc: true },
 ];
 
-const TABLE_HEADER = ['代码', '名称', '最新价', '涨跌幅', '成交额'];
+const TABLE_HEADER_KEYS = ['home_colCode', 'home_colName', 'home_colPrice', 'home_colChange', 'home_colAmount'];
 const COL_FLEX = [22, 26, 16, 16, 20];
 
 export default function AllStocksScreen() {
   const theme = useTheme();
+  const { t, tf } = useT();
   const router = useRouter();
   const online = useOnline();
 
@@ -99,7 +101,7 @@ export default function AllStocksScreen() {
     try {
       const list = await fetchAllStocks(200);
       if (list.length === 0) {
-        if (!silent) setError('请检查网络连接后点「重试」');
+        if (!silent) setError(t('common_networkError'));
         return;
       }
       setStocks(list);
@@ -110,10 +112,10 @@ export default function AllStocksScreen() {
         const hh = String(t.getHours()).padStart(2, '0');
         const mm = String(t.getMinutes()).padStart(2, '0');
         const ss = String(t.getSeconds()).padStart(2, '0');
-        showToast(`已刷新 · ${hh}:${mm}:${ss}`);
+        showToast(tf('home_refreshed', { time: `${hh}:${mm}:${ss}` }));
       }
     } catch {
-      if (!silent) setError('请检查网络连接后点「重试」');
+      if (!silent) setError(t('common_networkError'));
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -178,7 +180,7 @@ export default function AllStocksScreen() {
   const handleLongPress = useCallback(async (s: Stock) => {
     const nowFav = await applyFav(s);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    showToast(nowFav ? '已加入自选' : '取消自选');
+    showToast(nowFav ? t('home_addedFav') : t('home_removedFav'));
   }, [applyFav, showToast]);
 
   const applyExclusions = useCallback(
@@ -238,18 +240,18 @@ export default function AllStocksScreen() {
     [router, view]
   );
 
-  const sortLabel = SORT_OPTIONS.find((o) => o.key === sortKey)!.label.replace(/序$/, '');
+  const sortLabel = t(SORT_OPTIONS.find((o) => o.key === sortKey)!.labelKey as never);
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]} edges={['top']}>
       {/* ① 顶栏：标题 + 搜索框 */}
       <View style={[styles.topBar, { borderBottomColor: theme.border }]}>
-        <ThemedText type="subtitle" style={styles.title}>全部股票</ThemedText>
+        <ThemedText type="subtitle" style={styles.title}>{t('tab_stocks')}</ThemedText>
         <View style={[styles.searchBox, { backgroundColor: theme.backgroundElement }]}>
           <Text style={[styles.searchIcon, { color: theme.textSecondary }]}>🔍</Text>
           <TextInput
             style={[styles.searchInput, { color: theme.text }]}
-            placeholder="搜索名称/代码，如 浦发银行 600000"
+            placeholder={t('home_searchPlaceholder')}
             placeholderTextColor={theme.textSecondary}
             value={query}
             onChangeText={setQuery}
@@ -258,7 +260,7 @@ export default function AllStocksScreen() {
             returnKeyType="search"
           />
           {query ? (
-            <Pressable onPress={() => setQuery('')} hitSlop={8} accessibilityLabel="清空搜索">
+            <Pressable onPress={() => setQuery('')} hitSlop={8} accessibilityLabel={t('home_clearSearch')}>
               <Text style={[styles.clearIcon, { color: theme.textSecondary }]}>✕</Text>
             </Pressable>
           ) : null}
@@ -269,14 +271,14 @@ export default function AllStocksScreen() {
       <View style={[styles.toolBar, { borderBottomColor: theme.border }]}>
         <Pressable onPress={() => router.push('/filter')} hitSlop={6}>
           <View style={[styles.filterBtn, { backgroundColor: theme.backgroundElement }]}>
-            <Text style={[styles.filterBtnText, { color: theme.text }]}>⧩ 筛选条件{activeCondCount > 0 ? ` · ${activeCondCount}` : ''}</Text>
+            <Text style={[styles.filterBtnText, { color: theme.text }]}>⧩ {t('home_filterBtn')}{activeCondCount > 0 ? ` · ${activeCondCount}` : ''}</Text>
           </View>
         </Pressable>
         <Pressable onPress={() => setSortMenuOpen(true)} hitSlop={6} style={styles.sortBtn}>
-          <Text style={[styles.sortText, { color: theme.text }]}>排序 · {sortLabel} ▾</Text>
+          <Text style={[styles.sortText, { color: theme.text }]}>{t('home_sort')} · {sortLabel} ▾</Text>
         </Pressable>
         <View style={styles.flex1} />
-        <Pressable onPress={onRefresh} disabled={refreshing} hitSlop={8} accessibilityLabel="刷新行情">
+        <Pressable onPress={onRefresh} disabled={refreshing} hitSlop={8} accessibilityLabel={t('home_refresh')}>
           <Animated.Text style={[styles.refreshIcon, { color: theme.text, transform: [{ rotate: spinDeg }] }]}>
             ⟳
           </Animated.Text>
@@ -287,7 +289,7 @@ export default function AllStocksScreen() {
       {!online || snapshotStale ? (
         <View style={[styles.banner, { backgroundColor: theme.backgroundElement }]}>
           <Text style={[styles.bannerText, { color: theme.textSecondary }]}>
-            {!online ? '离线' : '本地缓存'} · 数据截至 {lastLoadedAt ? new Date(lastLoadedAt).toISOString().slice(0, 10) : '—'}
+            {tf('home_dataAsOf', { date: lastLoadedAt ? new Date(lastLoadedAt).toISOString().slice(0, 10) : '—' })}
           </Text>
         </View>
       ) : null}
@@ -312,9 +314,9 @@ export default function AllStocksScreen() {
 
       {/* ③ 列表表头 */}
       <View style={[styles.tableHeader, { borderBottomColor: theme.border }]}>
-        {TABLE_HEADER.map((h, i) => (
+        {TABLE_HEADER_KEYS.map((h, i) => (
           <View key={h} style={[styles.thCol, { flex: COL_FLEX[i] }, i >= 2 && styles.thRight]}>
-            <Text style={[styles.thText, { color: theme.textSecondary }]} numberOfLines={1}>{h}</Text>
+            <Text style={[styles.thText, { color: theme.textSecondary }]} numberOfLines={1}>{t(h as never)}</Text>
           </View>
         ))}
         <View style={styles.thStar} />
@@ -329,7 +331,7 @@ export default function AllStocksScreen() {
           <ThemedText type="small" themeColor="textSecondary" style={styles.errText}>{error}</ThemedText>
           <Pressable onPress={() => load()}>
             <View style={[styles.retryBtn, { backgroundColor: theme.backgroundElement }]}>
-              <ThemedText type="smallBold">重试</ThemedText>
+              <ThemedText type="smallBold">{t('common_retry')}</ThemedText>
             </View>
           </Pressable>
         </View>
@@ -354,7 +356,7 @@ export default function AllStocksScreen() {
           )}
           ItemSeparatorComponent={() => <View style={[styles.sep, { backgroundColor: theme.border }]} />}
           ListEmptyComponent={
-            <ThemedText type="small" themeColor="textSecondary" style={styles.empty}>暂无数据</ThemedText>
+            <ThemedText type="small" themeColor="textSecondary" style={styles.empty}>{t('common_noData')}</ThemedText>
           }
         />
       )}
@@ -369,7 +371,7 @@ export default function AllStocksScreen() {
                 <Pressable key={o.key} onPress={() => onSelectSort(o.key)}>
                   <View style={styles.menuItem}>
                     <Text style={[styles.menuItemText, { color: active ? theme.tint : theme.text, fontWeight: active ? '700' : '400' }]}>
-                      {o.label}
+                      {t(o.labelKey as never)}
                     </Text>
                     {active ? <Text style={{ color: theme.tint }}>✓</Text> : null}
                   </View>

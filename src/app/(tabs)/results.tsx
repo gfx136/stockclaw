@@ -8,6 +8,7 @@ import { ThemedText } from '@/components/themed-text';
 import { useTheme } from '@/hooks/use-theme';
 import { loadFavorites, toggleFavorite } from '@/lib/favorites';
 import { setDetailList } from '@/lib/detail-nav';
+import { useT } from '@/lib/i18n';
 import { getFilterState, setFilterOutput, subscribeFilter } from '@/lib/filter-store';
 import type { Stock } from '@/types/stock';
 
@@ -18,6 +19,7 @@ import type { Stock } from '@/types/stock';
  */
 export default function ResultsScreen() {
   const theme = useTheme();
+  const { t } = useT();
   const router = useRouter();
   const [query, setQuery] = useState('');
   const [favSet, setFavSet] = useState<Set<string>>(new Set());
@@ -40,12 +42,12 @@ export default function ResultsScreen() {
       else next.delete(s.code);
       return next;
     });
-  }, []);
+  }, [t]);
 
   const handleClear = useCallback(() => {
-    Alert.alert('清空筛选结果？', '将删除当前命中列表', [
-      { text: '取消', style: 'cancel' },
-      { text: '清空', style: 'destructive', onPress: () => setFilterOutput(null) },
+    Alert.alert(t('results_clearConfirm'), t('results_clearDesc'), [
+      { text: t('common_cancel'), style: 'cancel' },
+      { text: t('common_clear'), style: 'destructive', onPress: () => setFilterOutput(null) },
     ]);
   }, []);
 
@@ -62,14 +64,14 @@ export default function ResultsScreen() {
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]} edges={['top']}>
       <View style={styles.header}>
-        <ThemedText type="subtitle">筛选结果</ThemedText>
+        <ThemedText type="subtitle">{t('results_title')}</ThemedText>
         {output ? (
           <>
             <ThemedText type="small" themeColor="textSecondary">
               命中 {filtered.length} 只
             </ThemedText>
             <Pressable onPress={handleClear} hitSlop={8}>
-              <ThemedText type="small" style={{ color: theme.tint }}>清空</ThemedText>
+              <ThemedText type="small" style={{ color: theme.tint }}>{t('common_clear')}</ThemedText>
             </Pressable>
           </>
         ) : null}
@@ -79,7 +81,7 @@ export default function ResultsScreen() {
         <View style={styles.center}>
           <Text style={styles.emptyIcon}>📋</Text>
           <ThemedText type="small" themeColor="textSecondary" style={styles.emptyText}>
-            暂无筛选结果。{'\n'}在「全部股票」页点击筛选条件运行后，命中股票会自动出现在这里。
+            {t('results_emptyHint')}
           </ThemedText>
         </View>
       ) : (
@@ -87,7 +89,7 @@ export default function ResultsScreen() {
           <View style={styles.searchWrap}>
             <TextInput
               style={[styles.search, { backgroundColor: theme.backgroundElement, color: theme.text }]}
-              placeholder="结果内过滤，名称/代码"
+              placeholder={t('results_filterPlaceholder')}
               placeholderTextColor={theme.textSecondary}
               value={query}
               onChangeText={setQuery}
@@ -97,7 +99,7 @@ export default function ResultsScreen() {
           </View>
           {filtered.length === 0 ? (
             <View style={styles.center}>
-              <ThemedText type="small" themeColor="textSecondary">没有符合条件的股票</ThemedText>
+              <ThemedText type="small" themeColor="textSecondary">{t('results_empty')}</ThemedText>
             </View>
           ) : (
             <FlatList

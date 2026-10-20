@@ -24,6 +24,7 @@ import { useTheme } from '@/hooks/use-theme';
 import { fetchQuote } from '@/lib/api/failover';
 import { getDetailName, neighborCode } from '@/lib/detail-nav';
 import { isFavorite, toggleFavorite } from '@/lib/favorites';
+import { useT } from '@/lib/i18n';
 import { fmtChange, fmtPercent, fmtPrice, monthDayTime, upDownColor } from '@/lib/format';
 import { indicatorColor } from '@/lib/indicator-palette';
 import { calcAllIndicators, nthLast, snapshotAt } from '@/lib/indicators';
@@ -48,11 +49,11 @@ import type { IndicatorSeries, KlineBar, KlinePeriod, Stock } from '@/types/stoc
  * 比例硬约束：主图:副图 = 3.4:1（两向）。
  */
 
-const PERIODS: { key: KlinePeriod; label: string; short: string }[] = [
-  { key: '60min', label: '60分钟', short: '60m' },
-  { key: 'daily', label: '日', short: 'D' },
-  { key: 'weekly', label: '周', short: 'W' },
-  { key: 'monthly', label: '月', short: 'M' },
+const PERIODS: { key: KlinePeriod; labelKey: string; shortKey: string }[] = [
+  { key: '60min', labelKey: 'detail_period60m', shortKey: 'detail_period60mShort' },
+  { key: 'daily', labelKey: 'detail_periodDaily', shortKey: 'detail_periodDailyShort' },
+  { key: 'weekly', labelKey: 'detail_periodWeekly', shortKey: 'detail_periodWeeklyShort' },
+  { key: 'monthly', labelKey: 'detail_periodMonthly', shortKey: 'detail_periodMonthlyShort' },
 ];
 const BAR_COUNT = 800;
 
@@ -60,6 +61,7 @@ export default function StockDetailScreen() {
   const params = useLocalSearchParams<{ code: string; name?: string }>();
   const theme = useTheme();
   const scheme = useColorScheme();
+  const { t, tf } = useT();
   const isDark = scheme === 'dark';
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -186,14 +188,14 @@ export default function StockDetailScreen() {
       const results = await downloadAllPeriods(code, BAR_COUNT);
       const okCount = results.filter((r) => r.ok).length;
       if (okCount === 0) {
-        setTip(`K 线请到 设置 › 本地化数据 下载对应周期`);
+        setTip(t('detail_downloadHint'));
       } else {
-        setTip(`已更新 ${okCount}/${results.length} 个周期`);
+        setTip(tf('detail_downloadOk', { ok: okCount, total: results.length }));
         await loadBars(code, period);
         setWeeklyBars(await loadKlines(code, 'weekly', 300).catch(() => []));
       }
     } catch (e) {
-      setTip(e instanceof Error ? e.message : '下载异常');
+      setTip(e instanceof Error ? e.message : t('detail_downloadError'));
     } finally {
       setDownloading(false);
     }
@@ -231,7 +233,7 @@ export default function StockDetailScreen() {
   const onShare = useCallback(async () => {
     try {
       await Share.share({
-        message: `${stockName} ${code} 最新价 ${fmtPrice(quote?.price)} 涨跌幅 ${fmtPercent(quote?.changePercent)} —— 选股助手`,
+        message: `${stockName} ${code}  ${fmtPrice(quote?.price)}  ${fmtPercent(quote?.changePercent)}`,
       });
     } catch { /* 取消 */ }
   }, [stockName, code, quote]);
@@ -278,18 +280,18 @@ export default function StockDetailScreen() {
   // 速览带 6 项（固定顺序，§4.4）
   const overviewItems: OverviewItem[] = useMemo(() => {
     const s = snapshot ?? {};
-    const rel = (v?: number) => (v === undefined ? '—' : latestClose >= v ? '↑站上' : '↓跌破');
+    const rel = (v?: number) => (v === undefined ? '—' : latestClose >= v ? t('detail_above') : t('detail_below'));
     return [
       { key: 'bbi', name: 'BBI', value: fmtPrice(s.bbi), judge: rel(s.bbi), enabled: toggles.bbi },
       { key: 'ma20', name: 'MA20', value: fmtPrice(s.ma20), judge: rel(s.ma20), enabled: toggles.ma20 },
       { key: 'ma26', name: 'MA26', value: fmtPrice(s.ma26), judge: rel(s.ma26), enabled: toggles.ma26 },
       {
         key: 'macd', name: 'MACD', value: fmtPrice(s.macdHist),
-        judge: macdCross === 'golden' ? '金叉' : macdCross === 'dead' ? '死叉' : (s.macdHist ?? 0) >= 0 ? '柱为正' : '柱为负',
+        judge: macdCross === 'golden' ? t('detail_goldenCross') : macdCross === 'dead' ? t('detail_deadCross') : (s.macdHist ?? 0) >= 0 ? t('detail_histPositive') : t('detail_histNegative'),
         enabled: toggles.macd,
       },
-      { key: 'kdj', name: 'KDJ', value: `J=${fmtPrice(s.j)}`, judge: (s.j ?? 50) > 100 ? '超买' : (s.j ?? 50) < 0 ? '超卖' : '中性', enabled: toggles.kdj },
-      { key: 'rsi', name: 'RSI', value: fmtPrice(s.rsi14), judge: (s.rsi14 ?? 50) > 70 ? '超买' : (s.rsi14 ?? 50) < 30 ? '超卖' : '中性', enabled: toggles.rsi },
+      { key: 'kdj', name: 'KDJ', value: `J=${fmtPrice(s.j)}`, judge: (s.j ?? 50) > 100 ? t('detail_overbought') : (s.j ?? 50) < 0 ? t('detail_oversold') : t('detail_neutral'), enabled: toggles.kdj },
+      { key: 'rsi', name: 'RSI', value: fmtPrice(s.rsi14), judge: (s.rsi14 ?? 50) > 70 ? t('detail_overbought') : (s.rsi14 ?? 50) < 30 ? t('detail_oversold') : t('detail_neutral'), enabled: toggles.rsi },
     ];
   }, [snapshot, toggles, macdCross, latestClose]);
 
@@ -318,12 +320,12 @@ export default function StockDetailScreen() {
       }
     }
     return [
-      mk('日线：收盘 > BBI', dBbi !== undefined ? dClose > dBbi : null, 25),
-      mk('日线：近 4 根连续收盘 > BBI', fourOk, 25),
-      mk('日线：BBI > MA26', dBbi !== undefined && dMa26 !== undefined ? dBbi > dMa26 : null, 27),
-      mk('周线：收盘 > BBI', wBbi !== undefined ? wClose > wBbi : null, 27),
-      mk('周线：BBI > MA26', wBbi !== undefined && wMa26 !== undefined ? wBbi > wMa26 : null, 27),
-      mk('周线：红柱（收 > 开）', wOk ? wClose > wOpen : null, 27),
+      mk(t('detail_ruleDailyCloseAboveBbi'), dBbi !== undefined ? dClose > dBbi : null, 25),
+      mk(t('detail_ruleDaily4AboveBbi'), fourOk, 25),
+      mk(t('detail_ruleDailyBbiAboveMa26'), dBbi !== undefined && dMa26 !== undefined ? dBbi > dMa26 : null, 27),
+      mk(t('detail_ruleWeeklyCloseAboveBbi'), wBbi !== undefined ? wClose > wBbi : null, 27),
+      mk(t('detail_ruleWeeklyBbiAboveMa26'), wBbi !== undefined && wMa26 !== undefined ? wBbi > wMa26 : null, 27),
+      mk(t('detail_ruleWeeklyRed'), wOk ? wClose > wOpen : null, 27),
     ];
   }, [bars, weeklyBars]);
 
@@ -358,7 +360,7 @@ export default function StockDetailScreen() {
       {/* ① 标题行（紧贴灵动岛下方，无冗余留白；问题6）
           左段仅一个返回箭头（去掉"返回"二字，避免与系统返回重复感） */}
       <View style={[styles.titleRow, { paddingTop: insets.top, borderBottomColor: theme.border }]}>
-        <Pressable onPress={() => router.back()} hitSlop={10} style={styles.backBtn} accessibilityLabel="返回">
+        <Pressable onPress={() => router.back()} hitSlop={10} style={styles.backBtn} accessibilityLabel={t('common_back')}>
           <Text style={[styles.backText, { color: theme.tint }]}>‹</Text>
         </Pressable>
 
@@ -370,7 +372,7 @@ export default function StockDetailScreen() {
             onPressOut={stopFast}
             hitSlop={{ top: 12, bottom: 12, left: 10, right: 10 }}
             style={styles.arrowBtn}
-            accessibilityLabel="上一只">
+            accessibilityLabel={t('detail_prev')}>
             <Text style={[styles.arrow, { color: theme.text }]}>◀</Text>
           </Pressable>
           <View style={styles.nameBlock}>
@@ -387,7 +389,7 @@ export default function StockDetailScreen() {
             onPressOut={stopFast}
             hitSlop={{ top: 12, bottom: 12, left: 10, right: 10 }}
             style={styles.arrowBtn}
-            accessibilityLabel="下一只">
+            accessibilityLabel={t('detail_next')}>
             <Text style={[styles.arrow, { color: theme.text }]}>▶</Text>
           </Pressable>
         </View>
@@ -406,10 +408,10 @@ export default function StockDetailScreen() {
 
         {/* 右段：星标 + 分享（32pt 图标，距右 12pt） */}
         <View style={styles.rightSeg}>
-          <Pressable onPress={handleToggleFav} hitSlop={8} style={styles.iconBtn} accessibilityLabel="自选">
+          <Pressable onPress={handleToggleFav} hitSlop={8} style={styles.iconBtn} accessibilityLabel={t('detail_addFav')}>
             <Text style={[styles.icon, { color: fav ? theme.tint : theme.text }]}>{fav ? '★' : '☆'}</Text>
           </Pressable>
-          <Pressable onPress={onShare} hitSlop={8} style={styles.iconBtn} accessibilityLabel="分享">
+          <Pressable onPress={onShare} hitSlop={8} style={styles.iconBtn} accessibilityLabel={t('common_share')}>
             <Text style={[styles.icon, { color: theme.text }]}>⤴</Text>
           </Pressable>
         </View>
@@ -434,15 +436,15 @@ export default function StockDetailScreen() {
             </View>
             <View style={styles.priceRight}>
               <View style={styles.ohlcRow}>
-                <Text style={[styles.ohlcLabel, { color: theme.textSecondary }]}>今开</Text>
+                <Text style={[styles.ohlcLabel, { color: theme.textSecondary }]}>{t('detail_open')}</Text>
                 <Text style={[styles.ohlcVal, { color: theme.text }]}>{fmtPrice(quote?.open)}</Text>
-                <Text style={[styles.ohlcLabel, { color: theme.textSecondary }]}>昨收</Text>
+                <Text style={[styles.ohlcLabel, { color: theme.textSecondary }]}>{t('detail_prevClose')}</Text>
                 <Text style={[styles.ohlcVal, { color: theme.text }]}>{fmtPrice(quote?.prevClose)}</Text>
               </View>
               <View style={styles.ohlcRow}>
-                <Text style={[styles.ohlcLabel, { color: theme.textSecondary }]}>最高</Text>
+                <Text style={[styles.ohlcLabel, { color: theme.textSecondary }]}>{t('detail_high')}</Text>
                 <Text style={[styles.ohlcVal, { color: theme.text }]}>{fmtPrice(quote?.high)}</Text>
-                <Text style={[styles.ohlcLabel, { color: theme.textSecondary }]}>最低</Text>
+                <Text style={[styles.ohlcLabel, { color: theme.textSecondary }]}>{t('detail_low')}</Text>
                 <Text style={[styles.ohlcVal, { color: theme.text }]}>{fmtPrice(quote?.low)}</Text>
               </View>
             </View>
@@ -458,7 +460,7 @@ export default function StockDetailScreen() {
                 <Pressable key={p.key} onPress={() => { setPeriod(p.key); Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); }} hitSlop={4}>
                   <View style={[styles.periodBtn, { backgroundColor: on ? theme.tint : 'transparent' }]}>
                     <Text style={[styles.periodText, { color: on ? '#fff' : theme.text }]}>
-                      {landscape ? p.short : p.label}
+                      {landscape ? t(p.shortKey as never) : t(p.labelKey as never)}
                     </Text>
                   </View>
                 </Pressable>
@@ -467,16 +469,16 @@ export default function StockDetailScreen() {
           </View>
           <View style={styles.optSpacer} />
           <Pressable onPress={() => setIndOpen(true)} hitSlop={8}>
-            <Text style={[styles.optBtn, { color: theme.tint }]}>指标 ▾</Text>
+            <Text style={[styles.optBtn, { color: theme.tint }]}>{t('detail_indicators')} ▾</Text>
           </Pressable>
           <Pressable onPress={() => { setResetToken((t) => t + 1); Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); }} hitSlop={8}>
-            <Text style={[styles.optBtn, { color: theme.text }]}>复位</Text>
+            <Text style={[styles.optBtn, { color: theme.text }]}>{t('detail_reset')}</Text>
           </Pressable>
           <Pressable onPress={toggleLandscape} hitSlop={8}>
             <Text style={[styles.optBtn, { color: theme.text }]}>⤢</Text>
           </Pressable>
           <Pressable onPress={onDownload} disabled={downloading} hitSlop={8}>
-            {downloading ? <ActivityIndicator size="small" /> : <Text style={[styles.optBtn, { color: theme.tint }]}>下载</Text>}
+            {downloading ? <ActivityIndicator size="small" /> : <Text style={[styles.optBtn, { color: theme.tint }]}>{t('detail_download')}</Text>}
           </Pressable>
         </View>
 
@@ -493,10 +495,10 @@ export default function StockDetailScreen() {
           ) : bars.length === 0 ? (
             <View style={[styles.chartLoading, { height: chartTotalH }]}>
               <ThemedText type="small" themeColor="textSecondary" style={styles.noData}>
-                未取到 K 线数据
+                {t('detail_noKline')}
               </ThemedText>
               <Pressable onPress={onDownload} disabled={downloading}>
-                <Text style={[styles.dlHint, { color: theme.tint }]}>{downloading ? '下载中…' : '点此重试'}</Text>
+                <Text style={[styles.dlHint, { color: theme.tint }]}>{downloading ? t('detail_downloading') : t('detail_retryDownload')}</Text>
               </Pressable>
             </View>
           ) : (
@@ -541,7 +543,7 @@ export default function StockDetailScreen() {
         {!landscape ? (
           <View style={styles.statusBar}>
             <ThemedText type="code" themeColor="textSecondary" style={styles.statusText}>
-              数据源：自动 · 数据截至 {dataAt ? monthDayTime(dataAt) : (bars[bars.length - 1]?.date ?? '—')}
+              {tf('detail_dataSource', { time: dataAt ? monthDayTime(dataAt) : (bars[bars.length - 1]?.date ?? '—') })}
             </ThemedText>
           </View>
         ) : null}
@@ -551,7 +553,7 @@ export default function StockDetailScreen() {
       <Modal visible={indOpen} transparent animationType="fade" onRequestClose={() => setIndOpen(false)}>
         <Pressable style={styles.indMask} onPress={() => setIndOpen(false)}>
           <View style={[styles.indPanel, { backgroundColor: theme.backgroundElement }]}>
-            <Text style={[styles.indPanelTitle, { color: theme.text }]}>主图叠加（多选）</Text>
+            <Text style={[styles.indPanelTitle, { color: theme.text }]}>{t('detail_mainOverlay')}</Text>
             <View style={styles.indRow}>
               {(['ma5', 'ma10', 'ma20', 'ma26', 'ma60', 'boll', 'bbi'] as IndToggleKey[]).map((k) => (
                 <Pressable key={k} onPress={() => onToggleIndicator(k)}>
@@ -564,13 +566,13 @@ export default function StockDetailScreen() {
                 </Pressable>
               ))}
             </View>
-            <Text style={[styles.indPanelTitle, { color: theme.text }]}>副图指标（单选）</Text>
+            <Text style={[styles.indPanelTitle, { color: theme.text }]}>{t('detail_subIndicator')}</Text>
             <View style={styles.indRow}>
               {(['macd', 'kdj', 'rsi', 'volume', 'amount'] as SubMode[]).map((m) => (
                 <Pressable key={m} onPress={() => { setSubInd(m); setSubIndicator(m); }}>
                   <View style={[styles.indChip, { backgroundColor: subInd === m ? theme.tint : theme.background }]}>
                     <Text style={[styles.indChipText, { color: subInd === m ? '#fff' : theme.text }]}>
-                      {{ macd: 'MACD', kdj: 'KDJ', rsi: 'RSI', volume: '量', amount: '额' }[m]}
+                      {{ macd: 'MACD', kdj: 'KDJ', rsi: 'RSI', volume: t('detail_vol'), amount: t('detail_amt') }[m]}
                     </Text>
                   </View>
                 </Pressable>

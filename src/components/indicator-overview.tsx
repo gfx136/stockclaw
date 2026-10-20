@@ -2,6 +2,7 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { useTheme } from '@/hooks/use-theme';
 import { indicatorColor } from '@/lib/indicator-palette';
+import { useT } from '@/lib/i18n';
 
 /**
  * 指标速览带（补充规格 v1.2 §4.4）——一条横向条带，非卡片网格。
@@ -32,6 +33,7 @@ interface Props {
 
 export function IndicatorOverviewStrip({ items, selectDate, landscape = false, onToggle, onOpenFull, isDark = true }: Props) {
   const theme = useTheme();
+  const { t } = useT();
 
   const renderItem = (it: OverviewItem) => (
     <Pressable
@@ -45,7 +47,7 @@ export function IndicatorOverviewStrip({ items, selectDate, landscape = false, o
           <Text style={[styles.name, { color: theme.textSecondary }]} numberOfLines={1}>{it.name}</Text>
         </View>
         <Text style={[styles.value, { color: theme.text }]} numberOfLines={1}>
-          {it.enabled ? it.value : '未开启'}
+          {it.enabled ? it.value : t('common_notEnabled')}
         </Text>
         {it.enabled ? (
           <Text style={[styles.judge, { color: theme.textSecondary }]} numberOfLines={1}>{it.judge}</Text>
@@ -74,10 +76,10 @@ export function IndicatorOverviewStrip({ items, selectDate, landscape = false, o
           {onOpenFull ? (
             <View style={styles.footer}>
               <Text style={[styles.latestTag, { color: theme.textSecondary }]}>
-                {selectDate ? selectDate : '最新'}
+                {selectDate ? selectDate : t('common_latest')}
               </Text>
               <Pressable onPress={onOpenFull} hitSlop={10}>
-                <Text style={[styles.fullLink, { color: theme.textSecondary }]}>完整指标数值 ›</Text>
+                <Text style={[styles.fullLink, { color: theme.textSecondary }]}>{t('detail_fullValues')} ›</Text>
               </Pressable>
             </View>
           ) : null}

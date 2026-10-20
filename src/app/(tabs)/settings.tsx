@@ -7,6 +7,7 @@ import { ThemedText } from '@/components/themed-text';
 import { semanticColor } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useTheme } from '@/hooks/use-theme';
+import { useT } from '@/lib/i18n';
 import { fetchAllStocks } from '@/lib/api/failover';
 import {
   getDownloadedCount,
@@ -58,6 +59,7 @@ export default function SettingsScreen() {
   const theme = useTheme();
   const isDark = useColorScheme() === 'dark';
   const router = useRouter();
+  const { t, tf, lang } = useT();
   const [stats, setStats] = useState<Stats | null>(null);
   const [downloadedCount, setDownloadedCount] = useState(0);
   const [defaultBars, setDefaultBarsState] = useState(60);
@@ -106,30 +108,30 @@ export default function SettingsScreen() {
   const onDownloadAll = useCallback(async () => {
     // 状态2：上一次仍在进行
     if (dlState.running) {
-      Alert.alert('下载进行中', `正在下载本地 K 线 ${dlState.done}/${dlState.total}`, [
+      Alert.alert(t('settings_dlRunningTitle'), tf('settings_downloadProgress', { done: dlState.done, total: dlState.total }), [
         dlState.paused
-          ? { text: '继续', onPress: () => resumeDownload() }
-          : { text: '暂停', onPress: () => pauseDownload() },
-        { text: '停止', style: 'destructive', onPress: () => stopDownload() },
-        { text: '取消', style: 'cancel' },
+          ? { text: t('settings_dlResume'), onPress: () => resumeDownload() }
+          : { text: t('settings_dlPause'), onPress: () => pauseDownload() },
+        { text: t('settings_dlStop'), style: 'destructive', onPress: () => stopDownload() },
+        { text: t('common_cancel'), style: 'cancel' },
       ]);
       return;
     }
     try {
       const stocks = await fetchAllStocks(200);
       if (stocks.length === 0) {
-        Alert.alert('提示', '未取到股票列表，请检查网络。');
+        Alert.alert(t('settings_dlNotice'), t('settings_noStockList'));
         return;
       }
       const hasData = await hasLocalData();
       if (!hasData) {
         // 状态3：首次全量 —— 开始前确认
         Alert.alert(
-          '首次全量下载',
-          '首次全量下载 K 线数据需要几分钟，建议在 Wi-Fi 下进行，且可切到后台继续。',
+          t('settings_dlFirstTitle'),
+          t('settings_dlFirstDesc'),
           [
-            { text: '取消', style: 'cancel' },
-            { text: '开始下载', onPress: () => { startFullDownload(stocks); } },
+            { text: t('common_cancel'), style: 'cancel' },
+            { text: t('settings_dlStart'), onPress: () => { startFullDownload(stocks); } },
           ]
         );
       } else {
@@ -137,9 +139,9 @@ export default function SettingsScreen() {
         startFullDownload(stocks);
       }
     } catch (e) {
-      Alert.alert('启动失败', e instanceof Error ? e.message : '请检查网络');
+      Alert.alert(t('settings_dlFail'), e instanceof Error ? e.message : t('settings_checkNetwork'));
     }
-  }, [dlState]);
+  }, [dlState, t, tf]);
 
   const onSpeedTest = useCallback(async () => {
     setTesting(true);
@@ -156,18 +158,25 @@ export default function SettingsScreen() {
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]} edges={['top']}>
       <ScrollView contentContainerStyle={styles.content}>
-        <ThemedText type="subtitle" style={styles.title}>设置</ThemedText>
+        <ThemedText type="subtitle" style={styles.title}>{t('settings_title')}</ThemedText>
 
         {/* 数据源 */}
-        <Section title="行情数据源" theme={theme}>
+        <Section title={t('settings_dataSource')} theme={theme}>
           {listSources().map((s) => {
             const active = sourceMode === s.id;
+            const capText = (k: string) =>
+              k === 'list' ? (lang === 'en' ? 'List' : '列表')
+                : k === 'kline' ? (lang === 'en' ? 'K-line' : 'K线')
+                  : (lang === 'en' ? 'Quote' : '实时');
+            const desc = s.id === 'auto'
+              ? (lang === 'en' ? 'Auto-switch by priority (recommended)' : '按优先级自动切换，推荐')
+              : s.caps.map(capText).join(' / ');
             return (
               <Pressable key={s.id} onPress={() => onSelectSource(s.id)}>
                 <View style={styles.row}>
                   <View style={styles.sourceLeft}>
-                    <Text style={[styles.rowLabel, { color: theme.text }]}>{s.name}</Text>
-                    <Text style={[styles.sourceDesc, { color: theme.textSecondary }]}>{s.desc}</Text>
+                    <Text style={[styles.rowLabel, { color: theme.text }]}>{t(s.nameKey as never)}</Text>
+                    <Text style={[styles.sourceDesc, { color: theme.textSecondary }]}>{desc}</Text>
                   </View>
                   <View
                     style={[
@@ -185,16 +194,16 @@ export default function SettingsScreen() {
           })}
           <View style={styles.row}>
             <Text style={[styles.rowLabel, { color: theme.textSecondary, fontSize: 12 }]}>
-              主数据源不可用时自动切换备用源，也可手动指定。
+              {t('settings_sourceNote')}
             </Text>
           </View>
           <Pressable onPress={onSpeedTest} disabled={testing}>
             <View style={styles.row}>
-              <Text style={[styles.rowLabel, { color: theme.tint }]}>连接测速</Text>
+              <Text style={[styles.rowLabel, { color: theme.tint }]}>{t('settings_speedTest')}</Text>
               {testing ? (
                 <ActivityIndicator size="small" />
               ) : (
-                <Text style={[styles.rowValue, { color: theme.textSecondary }]}>检测各源延迟 ›</Text>
+                <Text style={[styles.rowValue, { color: theme.textSecondary }]}>{t('settings_speedTestDesc')}</Text>
               )}
             </View>
           </Pressable>
@@ -204,35 +213,35 @@ export default function SettingsScreen() {
                 <View key={r.id} style={styles.speedRow}>
                   <Text style={[styles.speedName, { color: theme.text }]}>{r.name}</Text>
                   <Text style={[styles.speedVal, { color: r.ok ? semanticColor('success', isDark) : semanticColor('danger', isDark) }]}>
-                    {r.ok ? `${r.latencyMs}ms` : '不可用'} · 成功率 {r.successRate}%
+                    {r.ok ? `${r.latencyMs}ms` : t('common_unavailable')} · {t('settings_successRate').replace('{n}', String(r.successRate))}
                   </Text>
                   {r.ok ? (
                     <Pressable onPress={() => onSelectSource(r.id)} hitSlop={6}>
-                      <Text style={[styles.speedSet, { color: theme.tint }]}>设为源</Text>
+                      <Text style={[styles.speedSet, { color: theme.tint }]}>{t('settings_setAsSource')}</Text>
                     </Pressable>
                   ) : null}
                 </View>
               ))}
               <Text style={[styles.speedNote, { color: theme.textSecondary }]}>
-                测速结果仅供参考，实际速度受网络环境影响
+                {t('settings_speedNote')}
               </Text>
             </View>
           ) : null}
         </Section>
 
         {/* 本地化数据 */}
-        <Section title="本地化数据" theme={theme}>
+        <Section title={t('settings_localData')} theme={theme}>
           {/* 下载/更新本地 K 线数据 */}
           <Pressable onPress={onDownloadAll}>
             <View style={styles.row}>
               <View style={styles.sourceLeft}>
-                <Text style={[styles.rowLabel, { color: theme.text }]}>下载 / 更新本地 K 线数据</Text>
+                <Text style={[styles.rowLabel, { color: theme.text }]}>{t('settings_downloadKline')}</Text>
                 <Text style={[styles.sourceDesc, { color: theme.textSecondary }]}>
                   {dlState.running
-                    ? `正在下载本地 K 线… ${dlState.done}/${dlState.total}${dlState.paused ? '（已暂停）' : ''}`
+                    ? tf('settings_downloadProgress', { done: dlState.done, total: dlState.total }) + (dlState.paused ? t('settings_paused') : '')
                     : downloadedCount > 0
-                      ? `${downloadedCount} 只股票已同步 · 点击增量更新`
-                      : '暂无本地数据 · 点击开始（首次全量约几分钟）'}
+                      ? tf('settings_syncedStocks', { n: downloadedCount })
+                      : t('settings_noLocalData')}
                 </Text>
                 {dlState.running ? (
                   <View style={[styles.progressTrack, { backgroundColor: theme.background }]}>
@@ -241,7 +250,7 @@ export default function SettingsScreen() {
                 ) : null}
                 {dlState.running ? (
                   <Text style={[styles.dlNote, { color: theme.textSecondary }]}>
-                    可切后台继续下载，通知栏实时显示进度。
+                    {t('settings_continueBg')}
                   </Text>
                 ) : null}
               </View>
@@ -253,8 +262,8 @@ export default function SettingsScreen() {
           <Pressable onPress={() => router.push('/data-manage')}>
             <View style={styles.row}>
               <View style={styles.sourceLeft}>
-                <Text style={[styles.rowLabel, { color: theme.text }]}>本地数据管理</Text>
-                <Text style={[styles.sourceDesc, { color: theme.textSecondary }]}>查看明细与占用空间，可按周期删除或清空</Text>
+                <Text style={[styles.rowLabel, { color: theme.text }]}>{t('settings_localDataManage')}</Text>
+                <Text style={[styles.sourceDesc, { color: theme.textSecondary }]}>{t('settings_localDataManageDesc')}</Text>
               </View>
               <Text style={[styles.rowValue, { color: theme.textSecondary }]}>›</Text>
             </View>
@@ -262,15 +271,15 @@ export default function SettingsScreen() {
 
           {/* 本地化数据模式 */}
           <SwitchRow
-            label="本地化数据模式"
-            desc="K 线优先读取本地数据；缺失的股票自动走网络。筛选始终只使用本地数据。"
+            label={t('settings_localMode')}
+            desc={t('settings_localModeDesc')}
             value={localMode}
             onChange={async (v) => { setLocalMode(v); await setLocalDataMode(v); }}
             theme={theme}
           />
           <SwitchRow
-            label="增量更新"
-            desc="开启后只补缺失的 K 线"
+            label={t('settings_incremental')}
+            desc={t('settings_incrementalDesc')}
             value={incremental}
             onChange={async (v) => { setIncremental(v); await setIncrementalUpdate(v); }}
             theme={theme}
@@ -278,12 +287,12 @@ export default function SettingsScreen() {
         </Section>
 
         {/* 图表 */}
-        <Section title="图表" theme={theme}>
+        <Section title={t('settings_chart')} theme={theme}>
           <View style={styles.row}>
             <View style={styles.sourceLeft}>
-              <Text style={[styles.rowLabel, { color: theme.text }]}>默认可见 K 线根数</Text>
+              <Text style={[styles.rowLabel, { color: theme.text }]}>{t('settings_defaultBars')}</Text>
               <Text style={[styles.sourceDesc, { color: theme.textSecondary }]}>
-                当前 {defaultBars} 根（20 ~ 200）；详情页「复位」回到该值
+                {tf('settings_defaultBarsDesc', { n: defaultBars })}
               </Text>
             </View>
           </View>
@@ -299,10 +308,10 @@ export default function SettingsScreen() {
         </Section>
 
         {/* 后台下载 */}
-        <Section title="后台下载" theme={theme}>
+        <Section title={t('settings_bgDownload')} theme={theme}>
           <SwitchRow
-            label="后台下载"
-            desc="系统空闲时自动补全数据（时机由系统决定）"
+            label={t('settings_bgDownload')}
+            desc={t('settings_bgDownloadDesc')}
             value={bgDownload}
             onChange={async (v) => { setBgDownload(v); await setBackgroundDownload(v); }}
             theme={theme}
@@ -310,12 +319,12 @@ export default function SettingsScreen() {
         </Section>
 
         {/* 语言 */}
-        <Section title="语言" theme={theme}>
+        <Section title={t('settings_language')} theme={theme}>
           <SegmentRow
             options={[
-              { key: 'system', label: '跟随系统' },
-              { key: 'zh', label: '中文' },
-              { key: 'en', label: 'English' },
+              { key: 'system', label: t('settings_themeSystem') },
+              { key: 'zh', label: t('settings_langZh') },
+              { key: 'en', label: t('settings_langEn') },
             ]}
             value={language}
             onChange={async (v) => { setLanguageState(v); await setLanguage(v); }}
@@ -324,12 +333,12 @@ export default function SettingsScreen() {
         </Section>
 
         {/* 外观 */}
-        <Section title="外观" theme={theme}>
+        <Section title={t('settings_appearance')} theme={theme}>
           <SegmentRow
             options={[
-              { key: 'system', label: '跟随系统' },
-              { key: 'light', label: '浅色' },
-              { key: 'dark', label: '深色' },
+              { key: 'system', label: t('settings_themeSystem') },
+              { key: 'light', label: t('settings_themeLight') },
+              { key: 'dark', label: t('settings_themeDark') },
             ]}
             value={themePref}
             onChange={async (v) => { setThemePrefState(v); await setThemePref(v); }}
@@ -338,17 +347,19 @@ export default function SettingsScreen() {
         </Section>
 
         {/* 关于 */}
-        <Section title="关于" theme={theme}>
-          <Row label="版本" value="1.0.0" theme={theme} />
-          <Row label="数据来源" value="新浪 / 腾讯 / 东方财富 公开行情接口" theme={theme} />
+        <Section title={t('settings_about')} theme={theme}>
+          <Row label={t('settings_version')} value="1.0.0" theme={theme} />
+          <Row label={t('settings_dataSource')} value={t('settings_sourceNote')} theme={theme} />
           <View style={styles.row}>
             <Text style={[styles.rowLabel, { color: theme.textSecondary, fontSize: 12, flex: 1, lineHeight: 18 }]}>
-              行情数据来源于公开网络接口，仅供参考，延迟与准确性以交易所为准。本应用仅提供行情数据与技术指标展示，不构成任何投资建议；投资有风险，入市需谨慎。
+              {t('riskWarning')}
             </Text>
           </View>
           <View style={styles.row}>
             <Text style={[styles.rowLabel, { color: theme.textSecondary, fontSize: 12, flex: 1, lineHeight: 18 }]}>
-              隐私：不收集、不上传、不出售任何个人信息；行情数据仅从公开接口读取；设备码仅用于本地激活验证。
+              {lang === 'en'
+                ? 'Privacy: no personal information is collected, uploaded or sold. Quotes are read from public APIs only.'
+                : '隐私：不收集、不上传、不出售任何个人信息；行情数据仅从公开接口读取。'}
             </Text>
           </View>
         </Section>

@@ -2,6 +2,7 @@ import { Tabs } from 'expo-router';
 import { Text, useColorScheme } from 'react-native';
 
 import { Colors } from '@/constants/theme';
+import { useT } from '@/lib/i18n';
 
 function TabIcon({ emoji }: { emoji: string }) {
   return <Text style={{ fontSize: 20 }}>{emoji}</Text>;
@@ -10,6 +11,7 @@ function TabIcon({ emoji }: { emoji: string }) {
 export default function TabLayout() {
   const scheme = useColorScheme();
   const colors = Colors[scheme === 'unspecified' ? 'light' : scheme];
+  const { t } = useT();
 
   return (
     <Tabs
@@ -23,28 +25,28 @@ export default function TabLayout() {
       <Tabs.Screen
         name="index"
         options={{
-          title: '全部股票',
+          title: t('tab_stocks'),
           tabBarIcon: () => <TabIcon emoji="📈" />,
         }}
       />
       <Tabs.Screen
         name="results"
         options={{
-          title: '选股结果',
+          title: t('tab_results'),
           tabBarIcon: () => <TabIcon emoji="📋" />,
         }}
       />
       <Tabs.Screen
         name="favorites"
         options={{
-          title: '自选',
+          title: t('tab_favorites'),
           tabBarIcon: () => <TabIcon emoji="⭐" />,
         }}
       />
       <Tabs.Screen
         name="settings"
         options={{
-          title: '设置',
+          title: t('tab_settings'),
           tabBarIcon: () => <TabIcon emoji="⚙️" />,
         }}
       />

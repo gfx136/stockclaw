@@ -139,20 +139,23 @@ export async function fetchQuote(code: string): Promise<Partial<Stock>> {
   );
 }
 
-/** 列出所有数据源（设置页用）。显示顺序按产品规格：自动 / 新浪 / 腾讯 / 东财 */
-export function listSources(): { id: SourceMode; name: string; desc: string }[] {
+/**
+ * 列出所有数据源（设置页用）。显示顺序按产品规格：自动 / 新浪 / 腾讯 / 东财。
+ * ⚠️ 名称交给 UI 层翻译（i18n），此处只给 id 与能力标记，便于双语切换。
+ */
+export function listSources(): { id: SourceMode; nameKey: string; caps: string[] }[] {
   const order: DataSourceId[] = ['sina', 'tencent', 'eastmoney'];
   const rest = order
     .map((id) => SOURCES.find((s) => s.id === id))
     .filter((s): s is DataSource => !!s)
     .map((s) => ({
       id: s.id as SourceMode,
-      name: s.name,
-      desc: [s.supportsList && '列表', s.supportsKline && 'K线', s.supportsQuote && '实时']
-        .filter(Boolean)
-        .join('/'),
+      nameKey: `source_${s.id}`,
+      caps: [s.supportsList && 'list', s.supportsKline && 'kline', s.supportsQuote && 'quote'].filter(
+        (x): x is string => !!x
+      ),
     }));
-  return [{ id: 'auto', name: '自动（故障转移）', desc: '按优先级自动切换，推荐' }, ...rest];
+  return [{ id: 'auto', nameKey: 'source_auto', caps: [] }, ...rest];
 }
 
 /* ------------------------------------------------------------------ *
