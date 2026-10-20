@@ -406,8 +406,15 @@ export default function StockDetailScreen() {
           </View>
         ) : null}
 
-        {/* 右段：星标 + 分享（32pt 图标，距右 12pt） */}
+        {/* 右段：风险体检 + 星标 + 分享（32pt 图标） */}
         <View style={styles.rightSeg}>
+          <Pressable
+            onPress={() => router.push(`/risk/${code}?name=${encodeURIComponent(stockName)}` as never)}
+            hitSlop={8}
+            style={styles.iconBtn}
+            accessibilityLabel={t('risk_entry')}>
+            <Text style={[styles.icon, { color: theme.tint }]}>🛡</Text>
+          </Pressable>
           <Pressable onPress={handleToggleFav} hitSlop={8} style={styles.iconBtn} accessibilityLabel={t('detail_addFav')}>
             <Text style={[styles.icon, { color: fav ? theme.tint : theme.text }]}>{fav ? '★' : '☆'}</Text>
           </Pressable>

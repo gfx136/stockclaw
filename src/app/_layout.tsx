@@ -29,6 +29,10 @@ export default function RootLayout() {
               options={{ headerShown: false }}
             />
           <Stack.Screen
+              name="risk/[code]"
+              options={{ title: '财务风险体检', headerBackTitle: '返回' }}
+            />
+          <Stack.Screen
             name="filter/index"
             options={{
               title: '筛选条件',
