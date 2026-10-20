@@ -143,7 +143,7 @@ const styles = StyleSheet.create({
   container: { flex: 1 },
   header: {
     flexDirection: 'row', alignItems: 'baseline', gap: 12,
-    paddingHorizontal: 16, paddingTop: 6, paddingBottom: 8,
+    paddingHorizontal: 16, paddingTop: 4, paddingBottom: 6,
   },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12 },
   emptyIcon: { fontSize: 40 },

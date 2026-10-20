@@ -169,8 +169,11 @@ export default function SettingsScreen() {
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]} edges={['top']}>
+      {/* 页面标题（紧贴安全区，不留额外空白） */}
+      <View style={styles.pageHead}>
+        <ThemedText type="subtitle">{t('settings_title')}</ThemedText>
+      </View>
       <ScrollView contentContainerStyle={styles.content}>
-        <ThemedText type="subtitle" style={styles.title}>{t('settings_title')}</ThemedText>
 
         {/* 数据源 */}
         <Section title={t('settings_dataSource')} theme={theme}>
@@ -499,7 +502,8 @@ function SegmentRow<T extends string>({ options, value, onChange, theme }: {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  content: { padding: 16, gap: 20, paddingBottom: 40 },
+  pageHead: { paddingHorizontal: 16, paddingTop: 4, paddingBottom: 12 },
+  content: { paddingHorizontal: 16, gap: 20, paddingBottom: 40 },
   title: { marginBottom: 4 },
   section: { gap: 8 },
   sectionTitle: { fontSize: 12, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.5 },

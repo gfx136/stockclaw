@@ -134,13 +134,15 @@ export default function FilterScreen() {
   const hasKlineConds = hasAnyRules(filter) || filter.gapMin !== undefined;
 
   return (
-    <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]} edges={['top', 'bottom']}>
-      {/* 顶部：清空 / 标题 / 运行 */}
+    // ⚠️ 本页是 modal presentation，外层 Stack 已提供系统 header（含安全区）。
+    //    故 edges 只取 'bottom'——若再取 'top' 会与 header 叠加成双重留白。
+    <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]} edges={['bottom']}>
+      {/* 顶部操作行：清空 / 运行（标题已由系统 header 显示，此处不再重复） */}
       <View style={styles.topBar}>
         <Pressable onPress={clearAll} hitSlop={8}>
           <ThemedText type="small" themeColor="textSecondary">{t('filter_clear')}</ThemedText>
         </Pressable>
-        <ThemedText type="smallBold">{t('filter_title')}</ThemedText>
+        <View style={styles.topSpacer} />
         <Pressable onPress={run} disabled={running} hitSlop={8}>
           {running ? (
             <ActivityIndicator size="small" />
@@ -297,10 +299,11 @@ const styles = StyleSheet.create({
   container: { flex: 1 },
   topBar: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: 16, paddingVertical: 12,
+    paddingHorizontal: 16, paddingVertical: 8,
   },
+  topSpacer: { flex: 1 },
   scroll: { flex: 1 },
-  scrollContent: { paddingBottom: 48, paddingTop: 8 },
+  scrollContent: { paddingBottom: 48, paddingTop: 4 },
   block: { paddingHorizontal: 16, marginBottom: 22 },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   chip: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8 },
