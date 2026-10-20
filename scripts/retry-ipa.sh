@@ -35,11 +35,27 @@ api() { # api <path>  —— 只读 GET
     "https://api.github.com$1"
 }
 
-api_post() { # api_post <path> [body]
+api_post() { # api_post <path> [body]  —— 返回 body，HTTP 码写到 $HTTP_CODE 文件
   curl -s -m 25 --noproxy '*' -X POST \
+    -w '\n%{http_code}' \
     -H "Authorization: token $(get_token)" \
     -H "Accept: application/vnd.github+json" \
-    "https://api.github.com$1" -d "${2:-{}}"
+    "https://api.github.com$1" -d "${2:-{\}}" >/tmp/.rb_body.$$ 2>/dev/null
+  HTTP_CODE=$(tail -n1 /tmp/.rb_body.$$ 2>/dev/null)
+  sed '$d' /tmp/.rb_body.$$ 2>/dev/null
+  rm -f /tmp/.rb_body.$$
+}
+
+# 取当前最大的 run id（run id 单调递增，可用作"是否出现新 run"的判据）
+max_run_id() {
+  api "/repos/$REPO/actions/runs?per_page=20" | python -c "
+import sys, json
+try:
+    ids = [r['id'] for r in json.load(sys.stdin)['workflow_runs']]
+    print(max(ids) if ids else 0)
+except Exception:
+    print(0)
+"
 }
 
 log() { printf '[%s] %s\n' "$(date +%H:%M:%S)" "$*"; }
@@ -69,36 +85,47 @@ except Exception:
 }
 
 dispatch() {
+  # 注意：不能写成 out=$(api_post ...) —— 子 shell 里设置的 HTTP_CODE 传不回来
   api_post "/repos/$REPO/actions/workflows/$WORKFLOW/dispatches" '{"ref":"main"}' >/dev/null
+  if [ "$HTTP_CODE" != "204" ]; then
+    log "⚠️ dispatch 失败 HTTP=$HTTP_CODE"
+    return 1
+  fi
+  return 0
 }
 
-# 触发后等待新 run 出现，返回其 id。
-# ⚠️ 实测：dispatch 返回 204 后，新 run 可能需要 2 分钟以上才出现在列表里
-#    （GitHub 侧异步创建 + 列表缓存）。等待时间不足会被误判为"dispatch 失败"，
-#    进而重复触发，既浪费配额又加剧排队。
+# 触发后等待新 run 出现。
+# ⚠️ 坑1：dispatch 返回 204 后新 run 要 1~3 分钟才进列表（GitHub 侧异步创建）。
+# ⚠️ 坑2（旧版重大 bug）：以前用"任一 id != before_id"判断新 run，
+#    但列表按 created_at 倒序，第二条就是**更早的旧 run**，
+#    于是立刻误判"新 run 已创建"并拿去用 —— 实际既没等待、也可能重复触发。
+#    现在改为：记录 dispatch 前的最大 run id，只有出现 **更大的 id** 才算成功。
 DISPATCH_WAIT_SEC="${DISPATCH_WAIT_SEC:-180}"
+NEW_RUN_ID=""
 dispatch_and_wait() {
-  local before_id="$1" waited=0 rid
-  dispatch
+  local before_max waited=0 rid
+  before_max=$(max_run_id)
+  log "dispatch 前最大 run id = $before_max"
+  dispatch || return 1
   while [ "$waited" -lt "$DISPATCH_WAIT_SEC" ]; do
     sleep 10
     waited=$((waited + 10))
-    # 取最近 5 条，任一 id 与 before_id 不同即认为新 run 已出现
-    rid=$(api "/repos/$REPO/actions/runs?per_page=5" | python -c "
+    rid=$(api "/repos/$REPO/actions/runs?per_page=10" | python -c "
 import sys, json
 try:
-    for r in json.load(sys.stdin)['workflow_runs']:
-        if str(r['id']) != '$before_id':
-            print(r['id']); break
+    ids = [r['id'] for r in json.load(sys.stdin)['workflow_runs']]
+    new = [i for i in ids if i > $before_max]
+    print(max(new) if new else 0)
 except Exception:
-    print('0')
+    print(0)
 ")
     if [ -n "$rid" ] && [ "$rid" != "0" ]; then
       log "新 run 已创建: $rid（等待 ${waited}s）"
+      NEW_RUN_ID="$rid"
       return 0
     fi
   done
-  log "⚠️ 等待 ${DISPATCH_WAIT_SEC}s 仍未看到新 run"
+  log "⚠️ 等待 ${DISPATCH_WAIT_SEC}s 仍未看到新 run（run id 未超过 $before_max）"
   return 1
 }
 
@@ -192,7 +219,10 @@ print(int((datetime.now(timezone.utc) - c).total_seconds() / 60))
         sleep 10
         cancel_active       # 顺手清掉其它残留排队 run，避免占位
         sleep 3
-        dispatch_and_wait "$rid"
+        if ! dispatch_and_wait; then
+          log "本轮触发未生效，${POLL_SEC}s 后重试"
+          sleep "$POLL_SEC"
+        fi
       else
         log "run $rid 排队中（${age_min} 分钟），继续等待…"
         sleep "$POLL_SEC"
@@ -204,7 +234,13 @@ print(int((datetime.now(timezone.utc) - c).total_seconds() / 60))
     steps=$(job_steps "$rid")
     if [ "$steps" = "0" ]; then
       log "run $rid 结论=$concl 但步骤数=0 → 排队被回收（非编译错误），重新触发"
-      if dispatch_and_wait "$rid"; then :; fi
+      if ! dispatch_and_wait; then
+        # 不要空转把轮数烧光：dispatch 没成功就隔一个轮询间隔再来
+        log "本轮触发未生效，${POLL_SEC}s 后重试"
+        sleep "$POLL_SEC"
+      else
+        sleep "$POLL_SEC"   # 给新 run 一点时间，避免下一轮立刻又看到旧结论
+      fi
     else
       log "⚠️ run $rid 结论=$concl 且跑了 $steps 个步骤 → 可能是真的编译失败，请查看日志"
       log "   链接: https://github.com/$REPO/actions/runs/$rid"
@@ -216,4 +252,7 @@ print(int((datetime.now(timezone.utc) - c).total_seconds() / 60))
   return 1
 }
 
-main "$@"
+# 允许被 source 进来做单函数测试（直接执行时才跑 main）
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+  main "$@"
+fi
