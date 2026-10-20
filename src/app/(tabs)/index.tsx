@@ -23,6 +23,7 @@ import { fetchAllStocks } from '@/lib/api/failover';
 import { setDetailList } from '@/lib/detail-nav';
 import { loadFavorites, toggleFavorite } from '@/lib/favorites';
 import { getFilterState, setFilter, subscribeFilter } from '@/lib/filter-store';
+import { isSnapshotFresh, loadListSnapshot } from '@/lib/list-cache';
 import { getHomeSort, setHomeSort, type HomeSortKey } from '@/lib/prefs';
 import { buildPinyinMap } from '@/lib/pinyin-search';
 import type { Stock } from '@/types/stock';
@@ -61,6 +62,7 @@ export default function AllStocksScreen() {
   const [sortMenuOpen, setSortMenuOpen] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [lastLoadedAt, setLastLoadedAt] = useState<number | null>(null);
+  const [snapshotStale, setSnapshotStale] = useState(false);
 
   const listRef = useRef<FlatList>(null);
   const spin = useRef(new Animated.Value(0)).current;
@@ -90,17 +92,20 @@ export default function AllStocksScreen() {
     toastTimer.current = setTimeout(() => setToast(null), 1500);
   }, []);
 
-  const load = useCallback(async (isRefresh = false) => {
+  const load = useCallback(async (isRefresh = false, silent = false) => {
     if (isRefresh) setRefreshing(true);
-    else setLoading(true);
-    setError(null);
+    else if (!silent) setLoading(true);
+    if (!silent) setError(null);
     try {
       const list = await fetchAllStocks(200);
+      if (list.length === 0) {
+        if (!silent) setError('请检查网络连接后点「重试」');
+        return;
+      }
       setStocks(list);
       setLastLoadedAt(Date.now());
-      if (list.length === 0) {
-        setError('请检查网络连接后点「重试」');
-      } else if (isRefresh) {
+      setError(null);
+      if (isRefresh) {
         const t = new Date();
         const hh = String(t.getHours()).padStart(2, '0');
         const mm = String(t.getMinutes()).padStart(2, '0');
@@ -108,18 +113,34 @@ export default function AllStocksScreen() {
         showToast(`已刷新 · ${hh}:${mm}:${ss}`);
       }
     } catch {
-      setError('请检查网络连接后点「重试」');
+      if (!silent) setError('请检查网络连接后点「重试」');
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
   }, [showToast]);
 
+  /**
+   * 启动流程（问题1修复）：
+   * ① 立刻读本地快照 → 首屏秒显（无网络也能看）
+   * ② 再后台静默拉网络 → 回来后覆盖
+   * 这样双击图标到看到列表几乎是瞬时的，不再"加载好久"。
+   */
   useEffect(() => {
-    load();
     (async () => {
+      // ① 快照优先
+      const snap = await loadListSnapshot();
+      if (snap) {
+        setStocks(snap.list);
+        setLastLoadedAt(snap.at);
+        setLoading(false);
+        setSnapshotStale(!isSnapshotFresh(snap.at));
+      }
+      // ② 收藏与排序偏好
       setFavSet(new Set((await loadFavorites()).map((f) => f.code)));
       setSortKey(await getHomeSort());
+      // ③ 后台静默刷新（有快照时不显示加载态，无快照时才显示骨架屏）
+      load(false, !!snap);
     })();
   }, [load]);
 
@@ -263,10 +284,10 @@ export default function AllStocksScreen() {
       </View>
 
       {/* 离线横幅 */}
-      {!online ? (
+      {!online || snapshotStale ? (
         <View style={[styles.banner, { backgroundColor: theme.backgroundElement }]}>
           <Text style={[styles.bannerText, { color: theme.textSecondary }]}>
-            离线 · 数据截至 {lastLoadedAt ? new Date(lastLoadedAt).toISOString().slice(0, 10) : '—'}
+            {!online ? '离线' : '本地缓存'} · 数据截至 {lastLoadedAt ? new Date(lastLoadedAt).toISOString().slice(0, 10) : '—'}
           </Text>
         </View>
       ) : null}

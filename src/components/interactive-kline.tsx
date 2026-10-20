@@ -21,9 +21,9 @@ import type { IndicatorSeries, KlineBar } from '@/types/stock';
 
 const PAD_LEFT = 4;
 const PAD_RIGHT = 46;
-const PAD_TOP = 14; // 图例留白（§2.3）
-const GAP = 10;
-const SUB_H = 78;
+const PAD_TOP = 12; // 图例留白（§2.3）
+const GAP = 6;
+const DEFAULT_SUB_RATIO = 1 / 4.4; // 主图:副图 = 3.4:1（规格 §4.5 硬约束）
 
 const MIN_VISIBLE = 20;
 const MAX_VISIBLE = 500;
@@ -55,6 +55,8 @@ interface Props {
   /** y 轴数值标签反色（浅色主题下保证对比度 ≥12:1） */
   labelBg?: string;
   labelFg?: string;
+  /** 副图高度（不传则按 1/4.4 自动算，保证主图:副图 = 3.4:1） */
+  subHeight?: number;
 }
 
 export function InteractiveKline({
@@ -75,7 +77,10 @@ export function InteractiveKline({
   isDark = true,
   labelBg = '#FFFFFF',
   labelFg = '#000000',
+  subHeight,
 }: Props) {
+  /** 副图高度：显式传入优先，否则按 3.4:1 比例自动算 */
+  const SUB_H = subHeight ?? Math.max(40, Math.round(height * DEFAULT_SUB_RATIO));
   const [visibleCount, setVisibleCount] = useState(defaultVisible);
   const [scrollOffset, setScrollOffset] = useState(0);
   const [selected, setSelected] = useState<number | null>(null);
@@ -83,6 +88,8 @@ export function InteractiveKline({
   const [crossY, setCrossY] = useState<number | null>(null);
   /** 主轴锁定：'x' = 竖线跟手逐根，'y' = 横线跟手读价位 */
   const lockAxis = useRef<'x' | 'y' | null>(null);
+  /** 长按是否已激活（问题3：用它而非 selected 来判断是否禁平移） */
+  const longPressActive = useRef(false);
 
   // 复位（§3.5）
   const resetRef = useRef(resetToken);
@@ -242,13 +249,17 @@ export function InteractiveKline({
     () =>
       Gesture.Pan()
         .runOnJS(true)
-        .activeOffsetX([-8, 8])
+        .activeOffsetX([-10, 10])
+        // 纵向留给外层 ScrollView（避免与页面滚动冲突）
+        .failOffsetY([-24, 24])
         .onStart(() => {
-          if (lockAxis.current !== null || selectedRef.current !== null) return; // 十字光标模式禁用平移
+          // ⚠️ 只有「长按已激活」才禁平移（问题3修复：不能靠 selected 判断，
+          //    selected 在点按后要保留 1.5s，会把平移一并锁死）
+          if (longPressActive.current) return;
           baseOffset.current = scrollOffsetRef.current;
         })
         .onUpdate((e) => {
-          if (lockAxis.current !== null) return;
+          if (longPressActive.current) return;
           const deltaBars = -e.translationX / stepXRef.current;
           setScrollOffset(clampOffset(baseOffset.current + deltaBars));
         }),
@@ -269,6 +280,7 @@ export function InteractiveKline({
         .runOnJS(true)
         .activateAfterLongPress(300)
         .onStart((e) => {
+          longPressActive.current = true; // 长按激活 → 禁用平移
           lockAxis.current = null;
           setSelected(barIndexAt(e.x));
           setCrossY(e.y);
@@ -287,10 +299,12 @@ export function InteractiveKline({
           }
         })
         .onEnd(() => {
+          longPressActive.current = false;
           lockAxis.current = null;
           scheduleFade();
         })
         .onFinalize(() => {
+          longPressActive.current = false;
           lockAxis.current = null;
         }),
     []
@@ -325,9 +339,22 @@ export function InteractiveKline({
     [total, defaultVisible]
   );
 
+  /**
+   * 手势组合（问题3修复）：
+   * ⚠️ 绝不能把外层包成 Gesture.Exclusive(doubleTap, ...)——Exclusive 会让后续手势
+   *    等待 doubleTap 判定超时（约 300ms），导致横滑平移"感觉失效"。
+   * 正确结构：pinch 与单指操作 Simultaneous（第二指落下即接管）；
+   *          pan / longPress 用 Race 互斥（横滑 vs 长按）；
+   *          双击/单击独立成一组，不阻塞拖动。
+   */
   const composed = useMemo(
-    () => Gesture.Exclusive(doubleTap, Gesture.Race(Gesture.Simultaneous(pinch, pan), longPress, tap)),
-    [doubleTap, pinch, pan, longPress, tap]
+    () =>
+      Gesture.Simultaneous(
+        pinch,
+        Gesture.Race(pan, longPress),
+        Gesture.Exclusive(doubleTap, tap)
+      ),
+    [pinch, pan, longPress, doubleTap, tap]
   );
 
   const selBar = selected !== null && selected >= 0 && selected < total ? bars[selected] : null;
@@ -361,8 +388,9 @@ export function InteractiveKline({
 
   return (
     <View style={{ width }}>
-      {/* 图例（§2.3：图表区左上角覆盖，色点+同色文字） */}
-      {legend.length > 0 ? (
+      {/* 图例（§2.3：图表区左上角覆盖，色点+同色文字）
+          问题4修复：十字光标激活时隐藏图例，避免与信息条重叠在同一位置 */}
+      {legend.length > 0 && !crossActive ? (
         <View style={styles.legend} pointerEvents="none">
           {legend.map((it) => (
             <View key={it.key} style={styles.legendItem}>
@@ -559,8 +587,8 @@ const styles = StyleSheet.create({
   legendDot: { width: 8, height: 8, borderRadius: 4 },
   legendText: { fontSize: 10, fontWeight: '600' },
   infoBar: {
-    position: 'absolute', left: 0, right: PAD_RIGHT, top: 0, zIndex: 6,
-    backgroundColor: 'rgba(0,0,0,0.78)', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3,
+    position: 'absolute', left: PAD_LEFT + 2, right: PAD_RIGHT + 2, top: 1, zIndex: 7,
+    backgroundColor: 'rgba(0,0,0,0.82)', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3,
   },
   infoLine1: { color: '#FFFFFF', fontSize: 10, fontVariant: ['tabular-nums'] },
   infoLine2: { color: '#FFFFFF', fontSize: 10, fontVariant: ['tabular-nums'] },

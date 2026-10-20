@@ -27,7 +27,7 @@ import { isFavorite, toggleFavorite } from '@/lib/favorites';
 import { fmtChange, fmtPercent, fmtPrice, monthDayTime, upDownColor } from '@/lib/format';
 import { indicatorColor } from '@/lib/indicator-palette';
 import { calcAllIndicators, nthLast, snapshotAt } from '@/lib/indicators';
-import { downloadAllPeriods } from '@/lib/kline-downloader';
+import { downloadAllPeriods, downloadKlines } from '@/lib/kline-downloader';
 import { lastUpdateAt, loadKlines } from '@/lib/kline-db';
 import {
   getDefaultBars,
@@ -124,15 +124,36 @@ export default function StockDetailScreen() {
     })();
   }, [code]);
 
-  // 读本地 K 线
+  /**
+   * 读 K 线（问题2修复）：**本地优先 → 本地不足时自动联网回退 → 成功即落库**。
+   * 规格「本地化数据模式」明确：K 线优先读本地，缺失的股票自动走网络。
+   * 之前只读本地、缺失就显示"尚未下载"，导致已下载全量数据仍误报。
+   */
   const loadBars = useCallback(async (c: string, p: KlinePeriod) => {
     if (!c) return;
     setLoading(true);
     try {
-      const rows = await loadKlines(c, p, BAR_COUNT);
-      setBars(rows);
-      setSeries(rows.length >= 30 ? calcAllIndicators(rows, [3, 5, 6, 10, 12, 20, 24, 26, 60]) : null);
-      setDataAt(await lastUpdateAt());
+      // ① 本地
+      let rows = await loadKlines(c, p, BAR_COUNT);
+      if (rows.length >= 30) {
+        setBars(rows);
+        setSeries(calcAllIndicators(rows, [3, 5, 6, 10, 12, 20, 24, 26, 60]));
+        setDataAt(await lastUpdateAt());
+        return;
+      }
+      // ② 本地不足 → 联网回退，并落库（下次即命中本地）
+      try {
+        const r = await downloadKlines(c, p, BAR_COUNT, false);
+        if (r.ok) {
+          rows = await loadKlines(c, p, BAR_COUNT);
+          setBars(rows);
+          setSeries(rows.length >= 30 ? calcAllIndicators(rows, [3, 5, 6, 10, 12, 20, 24, 26, 60]) : null);
+          setDataAt(await lastUpdateAt());
+          return;
+        }
+      } catch { /* 回退失败则保持空态 */ }
+      setBars([]);
+      setSeries(null);
     } catch {
       setBars([]);
       setSeries(null);
@@ -142,11 +163,18 @@ export default function StockDetailScreen() {
   }, []);
   useEffect(() => { loadBars(code, period); }, [code, period, loadBars]);
 
-  // 周线（BBI 组规则判定用）
+  // 周线（BBI 组规则判定用）：同样本地优先 + 联网回退
   useEffect(() => {
     if (!code) return;
     (async () => {
-      try { setWeeklyBars(await loadKlines(code, 'weekly', 300)); } catch { setWeeklyBars([]); }
+      try {
+        let w = await loadKlines(code, 'weekly', 300);
+        if (w.length < 27) {
+          const r = await downloadKlines(code, 'weekly', 300, false).catch(() => null);
+          if (r?.ok) w = await loadKlines(code, 'weekly', 300);
+        }
+        setWeeklyBars(w);
+      } catch { setWeeklyBars([]); }
     })();
   }, [code]);
 
@@ -299,21 +327,39 @@ export default function StockDetailScreen() {
     ];
   }, [bars, weeklyBars]);
 
-  // 屏占比（§4.2/§4.3）
-  const mainH = landscape ? 146 : 262;
-  const subH = landscape ? 43 : 78;
-  const chartW = winW - 16 * 2 - 16;
+  /**
+   * 屏占比（用户反馈调整：K 线占比要更大）。
+   * 可用高度 = 屏幕高 − 顶部安全区 − 底部安全区（规格 §4.1 口径）。
+   * 竖屏分配：标题行 48 + 价格区 60 + 选项行 40 + 图表区(剩余最大) + 速览带 118 + 状态条 22。
+   * K 线主图 : 副图 维持 3.4 : 1（规格硬约束 S37）。
+   */
+  const availH = winH - insets.top - insets.bottom;
+  const TITLE_H = landscape ? 40 : 48;
+  const PRICE_H = landscape ? 0 : 60;
+  const OPT_H = landscape ? 36 : 40;
+  const STRIP_H = landscape ? 56 : 118;
+  const STATUS_H = landscape ? 0 : 22;
+  const chartTotalH = Math.max(
+    landscape ? 180 : 300,
+    availH - TITLE_H - PRICE_H - OPT_H - STRIP_H - STATUS_H - 16
+  );
+  // 小屏（可用高度 <660pt）内容可能溢出，此时允许滚动兜底；
+  // 常规机型内容刚好一屏，禁用滚动以免干扰图表手势（问题3）
+  const needScroll = availH < 660;
+  // 主图:副图 = 3.4:1（规格 S37 硬约束）
+  const subH = Math.round(chartTotalH / 4.4);
+  const chartW = winW - 16 * 2 - 8;
   const changeColor = upDownColor(quote?.changePercent);
   const hasPrice = (quote?.price ?? 0) > 0;
   const isFlat = !quote?.changePercent;
 
   return (
     <View style={[styles.container, { backgroundColor: theme.background }]}>
-      {/* ① 标题行（56pt 三段式，§1.1） */}
-      <View style={[styles.titleRow, { paddingTop: insets.top, height: 56 + insets.top, borderBottomColor: theme.border }]}>
-        {/* 左段：返回 */}
-        <Pressable onPress={() => router.back()} hitSlop={8} style={styles.backBtn} accessibilityLabel="返回">
-          <Text style={[styles.backText, { color: theme.tint }]}>‹ 返回</Text>
+      {/* ① 标题行（紧贴灵动岛下方，无冗余留白；问题6）
+          左段仅一个返回箭头（去掉"返回"二字，避免与系统返回重复感） */}
+      <View style={[styles.titleRow, { paddingTop: insets.top, borderBottomColor: theme.border }]}>
+        <Pressable onPress={() => router.back()} hitSlop={10} style={styles.backBtn} accessibilityLabel="返回">
+          <Text style={[styles.backText, { color: theme.tint }]}>‹</Text>
         </Pressable>
 
         {/* 中段：◀ 名称+代码 ▶（整体居中，长名省略不挤压箭头） */}
@@ -369,10 +415,15 @@ export default function StockDetailScreen() {
         </View>
       </View>
 
-      <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} scrollEnabled={!landscape}>
-        {/* ② 价格区（72pt；横屏已并入标题行） */}
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={styles.scrollContent}
+        scrollEnabled={needScroll}
+        showsVerticalScrollIndicator={false}
+      >
+        {/* ② 价格区（横屏已并入标题行） */}
         {!landscape ? (
-          <View style={styles.priceBlock}>
+          <View style={[styles.priceBlock, { height: PRICE_H }]}>
             <View style={styles.priceLeft}>
               <Text style={[styles.bigPrice, { color: hasPrice ? changeColor : theme.textSecondary }]}>
                 {hasPrice ? fmtPrice(quote?.price) : '--'}
@@ -398,8 +449,8 @@ export default function StockDetailScreen() {
           </View>
         ) : null}
 
-        {/* ③ 选项行（44pt / 横屏 40pt） */}
-        <View style={[styles.optionBar, { height: landscape ? 40 : 44 }]}>
+        {/* ③ 选项行 */}
+        <View style={[styles.optionBar, { height: OPT_H }]}>
           <View style={styles.periodSeg}>
             {PERIODS.map((p) => {
               const on = p.key === period;
@@ -438,21 +489,22 @@ export default function StockDetailScreen() {
         {/* ④ 图表区（K线主图 + 副图，比例 3.4:1） */}
         <View style={[styles.chartCard, { backgroundColor: theme.backgroundElement, marginHorizontal: 16 }]}>
           {loading && bars.length === 0 ? (
-            <View style={[styles.chartLoading, { height: mainH + subH + 30 }]}><ActivityIndicator /></View>
+            <View style={[styles.chartLoading, { height: chartTotalH }]}><ActivityIndicator /></View>
           ) : bars.length === 0 ? (
-            <View style={[styles.chartLoading, { height: mainH + subH + 30 }]}>
+            <View style={[styles.chartLoading, { height: chartTotalH }]}>
               <ThemedText type="small" themeColor="textSecondary" style={styles.noData}>
-                {landscape ? '尚未下载' : '尚未下载 · 点击开始下载'}
+                未取到 K 线数据
               </ThemedText>
               <Pressable onPress={onDownload} disabled={downloading}>
-                <Text style={[styles.dlHint, { color: theme.tint }]}>{downloading ? '下载中…' : '点击下载 K 线'}</Text>
+                <Text style={[styles.dlHint, { color: theme.tint }]}>{downloading ? '下载中…' : '点此重试'}</Text>
               </Pressable>
             </View>
           ) : (
             <InteractiveKline
               bars={bars}
               width={chartW}
-              height={mainH + subH + 30}
+              height={chartTotalH}
+              subHeight={subH}
               series={series ?? undefined}
               maOverlay={[5, 10, 20, 26, 60].filter((p) => (toggles[`ma${p}` as IndToggleKey]))}
               showBoll={toggles.boll}
@@ -551,10 +603,10 @@ const styles = StyleSheet.create({
   container: { flex: 1 },
   titleRow: {
     flexDirection: 'row', alignItems: 'center',
-    paddingHorizontal: 8, borderBottomWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: 8, paddingBottom: 4, borderBottomWidth: StyleSheet.hairlineWidth,
   },
-  backBtn: { minWidth: 62, height: 44, justifyContent: 'center' },
-  backText: { fontSize: 15 },
+  backBtn: { minWidth: 34, height: 40, justifyContent: 'center', alignItems: 'center' },
+  backText: { fontSize: 26, lineHeight: 30, fontWeight: '300' },
   midSeg: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 12 },
   arrowBtn: { width: 32, height: 32, alignItems: 'center', justifyContent: 'center' },
   arrow: { fontSize: 14 },

@@ -4,6 +4,7 @@ import { eastmoneySource } from './eastmoney-source';
 import { sinaSource } from './sina-source';
 import { tencentSource } from './tencent-source';
 import type { DataSource, DataSourceId } from './types';
+import { loadListSnapshot, saveListSnapshot } from '@/lib/list-cache';
 import type { KlineBar, KlinePeriod, Stock } from '@/types/stock';
 
 /**
@@ -96,12 +97,26 @@ async function withFailover<T>(
  *
  * 注：腾讯无全量列表接口，不参与；K线/实时行情走下面的 withFailover。
  */
+/**
+ * 全量行情列表（问题1修复：带本地快照兜底）。
+ * ① 网络成功 → 存快照返回
+ * ② 网络全失败 → 读上次快照返回（不抛错，至少能看历史数据）
+ */
 export async function fetchAllStocks(pageSize = 200): Promise<Stock[]> {
-  return withFailover(
-    (src) => src.fetchAllStocks(pageSize),
-    (list) => list.length > 0,
-    true // 只尝试支持列表的源
-  );
+  try {
+    const list = await withFailover(
+      (src) => src.fetchAllStocks(pageSize),
+      (list) => list.length > 0,
+      true // 只尝试支持列表的源
+    );
+    if (list.length > 0) {
+      saveListSnapshot(list);
+      return list;
+    }
+  } catch { /* 落到缓存兜底 */ }
+
+  const snap = await loadListSnapshot();
+  return snap?.list ?? [];
 }
 
 /** K 线：自动故障转移 */

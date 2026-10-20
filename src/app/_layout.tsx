@@ -26,7 +26,7 @@ export default function RootLayout() {
             <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
             <Stack.Screen
               name="stock/[code]"
-              options={{ title: '个股详情', headerBackTitle: '返回' }}
+              options={{ headerShown: false }}
             />
           <Stack.Screen
             name="filter/index"
