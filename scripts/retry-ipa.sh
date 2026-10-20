@@ -27,6 +27,10 @@ POLL_SEC="${POLL_SEC:-150}"         # 每轮轮询间隔（秒）
 #   被回收后再重新触发（此时本来也是队尾，没有损失）。
 QUEUE_LIMIT_MIN="${QUEUE_LIMIT_MIN:-17}"  # 排队超过该分钟数才考虑主动轮换
 
+# 只认「本次提交」的 run。默认取仓库当前 HEAD；给自动化任务用时可显式传。
+TARGET_SHA="${TARGET_SHA:-$(git rev-parse HEAD 2>/dev/null || true)}"
+export TARGET_SHA
+
 TOKEN=""
 get_token() {
   if [ -z "$TOKEN" ]; then
@@ -70,16 +74,22 @@ log() { printf '[%s] %s\n' "$(date +%H:%M:%S)" "$*"; }
 # ⚠️ 坑3：不能只看 per_page=1 的最新一条。实测会出现「新 run 已触发、但更早的一条
 #    还在 queued」并发两条排队的情况；只看最新一条就会以为没活跃 run 而再 dispatch 一次。
 #    所以：只要列表里还有活跃 run，就优先盯它（取 id 最大的那条）。
+# ⚠️ 坑4（严重）：**必须先按 commit 过滤**。否则上一版代码的成功 run 会被当成本次成果，
+#    直接把旧包下载下来当新包交付（实际踩过：v10 拿到了上一个 commit 的 ipa）。
+#    没有 head_sha 匹配的 run 时返回 status=no_run，由 main 触发一次新的。
 pick_run() {
-  api "/repos/$REPO/actions/runs?per_page=20" | python -c "
-import sys, json
+  api "/repos/$REPO/actions/runs?per_page=30" | python -c "
+import sys, json, os
 ACT = ('queued', 'in_progress', 'requested', 'waiting')
+target = os.environ.get('TARGET_SHA', '')
 try:
     runs = json.load(sys.stdin)['workflow_runs']
 except Exception:
-    print('0 none null 0'); raise SystemExit
+    print('0 api_error null 0'); raise SystemExit
+if target:
+    runs = [r for r in runs if (r.get('head_sha') or '') == target]
 if not runs:
-    print('0 none null 0'); raise SystemExit
+    print('0 no_run null 0'); raise SystemExit
 act = [r for r in runs if r['status'] in ACT]
 r = max(act, key=lambda x: x['id']) if act else runs[0]
 print(r['id'], r['status'], r.get('conclusion') or 'null', r['created_at'])
@@ -218,8 +228,18 @@ main() {
 
     read -r rid status concl created <<<"$(pick_run | tr -d '\r')"
     if [ "$rid" = "0" ]; then
-      log "读取 run 列表失败（网络？），稍后重试"
-      sleep "$POLL_SEC"; continue
+      if [ "$status" = "no_run" ]; then
+        # 当前提交还没有任何 run（刚 push 完最常见）→ 直接触发一次
+        log "提交 ${TARGET_SHA:0:7} 还没有对应的 run，触发一次"
+        if ! dispatch_and_wait; then
+          log "本轮触发未生效，${POLL_SEC}s 后重试"
+          sleep "$POLL_SEC"
+        fi
+      else
+        log "读取 run 列表失败（网络？），稍后重试"
+        sleep "$POLL_SEC"
+      fi
+      continue
     fi
 
     # 有活跃 run 时，先清掉并发的多余排队 run，只留一个（否则互相占位、还容易被误判）
