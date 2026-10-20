@@ -5,7 +5,7 @@ import Svg, { G, Line, Path, Rect, Text as SvgText } from 'react-native-svg';
 
 import { indicatorColor, indicatorDashed, indicatorWidth } from '@/lib/indicator-palette';
 import { QuoteColors, fmtMoney, fmtPercent, fmtPrice } from '@/lib/format';
-import type { IndicatorSeries, KlineBar } from '@/types/stock';
+import type { IndicatorSeries, KlineBar, KlinePeriod } from '@/types/stock';
 
 /**
  * 交互式 K 线图（补充规格 v1.2 §2/§3）。
@@ -28,6 +28,8 @@ const DEFAULT_SUB_RATIO = 1 / 4.4; // 主图:副图 = 3.4:1（规格 §4.5 硬�
 const MIN_VISIBLE = 20;
 const MAX_VISIBLE = 500;
 const LINE_MODE_CW = 3;
+/** 底部日期轴高度（K 线图 + 副图下方，见「日期轴」说明） */
+const DATE_H = 15;
 
 export type SubMode = 'volume' | 'amount' | 'macd' | 'kdj' | 'rsi';
 
@@ -57,6 +59,8 @@ interface Props {
   labelFg?: string;
   /** 副图高度（不传则按 1/4.4 自动算，保证主图:副图 = 3.4:1） */
   subHeight?: number;
+  /** 周期：仅用于底部日期轴的标签格式（日线显示 MM-DD、月线显示 YY-MM 等） */
+  period?: KlinePeriod;
 }
 
 export function InteractiveKline({
@@ -78,6 +82,7 @@ export function InteractiveKline({
   labelBg = '#FFFFFF',
   labelFg = '#000000',
   subHeight,
+  period = 'daily',
 }: Props) {
   /** 副图高度：显式传入优先，否则按 3.4:1 比例自动算 */
   const SUB_H = subHeight ?? Math.max(40, Math.round(height * DEFAULT_SUB_RATIO));
@@ -131,7 +136,8 @@ export function InteractiveKline({
   const geom = useMemo(() => {
     if (n === 0) return null;
     const plotW = Math.max(10, width - PAD_LEFT - PAD_RIGHT);
-    const mainH = Math.max(40, height - PAD_TOP - GAP - SUB_H);
+    // 底部额外让出 DATE_H 给日期轴，主图吃剩余高度
+    const mainH = Math.max(40, height - PAD_TOP - GAP - SUB_H - DATE_H);
 
     let hi = -Infinity;
     let lo = Infinity;
@@ -193,7 +199,9 @@ export function InteractiveKline({
       for (let i = startIdx; i < endIdx; i++) absorbSub(series.rsi[6]?.[i]);
     }
     const subAbsMax = Math.max(Math.abs(subMin), Math.abs(subMax)) || 1;
-    const subTop = height - SUB_H;
+    const subTop = height - DATE_H - SUB_H;
+    /** 绘图区底边（= 副图下沿 = 日期轴上沿）：选中高亮带和十字光标竖线到此为止 */
+    const plotBottom = subTop + SUB_H;
     const subYOf = (v: number) => subTop + SUB_H / 2 - (v / subAbsMax) * (SUB_H / 2 - 2);
 
     const ticks: { y: number; label: string }[] = [];
@@ -202,8 +210,47 @@ export function InteractiveKline({
       ticks.push({ y: yOf(v), label: fmtPrice(v) });
     }
 
-    return { plotW, mainH, stepX, cw, asLine, yOf, yToPrice, xOf, subYOf, subTop, subAbsMax, ticks, subVal };
-  }, [n, visBars, width, height, series, maOverlay, showBoll, showBbi, startIdx, endIdx, subMode]);
+    /* ── 底部日期轴 ──────────────────────────────────────────────
+       刻度数量按可用宽度自适应（按各周期标签的估算宽度留间距），
+       首刻度左对齐、末刻度右对齐，避免文字被绘图区边缘裁掉。 */
+    const hasTime = visBars.some((b) => typeof b.date === 'string' && b.date.includes(':'));
+    const sameDay =
+      hasTime && visBars.every((b) => (b.date || '').slice(0, 10) === (visBars[0]?.date || '').slice(0, 10));
+    const multiYear = new Set(visBars.map((b) => (b.date || '').slice(0, 4))).size > 1;
+    const labelOf = (d: string): string => {
+      const m = /^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2}))?/.exec(d || '');
+      if (!m) return (d || '').slice(0, 10);
+      const [, y, mo, dd, hh, mi] = m;
+      // 分时：同一天只给时刻；跨天补上「日」，否则会出现两个「10-19」这种重复标签
+      if (hasTime) return sameDay ? `${hh}:${mi}` : `${dd}/${hh}:${mi}`;
+      if (period === 'monthly') return `${y.slice(2)}-${mo}`;
+      // 跨年或周线时补上年份，避免“10-20”这种看不出年份
+      if (multiYear || period === 'weekly') return `${y.slice(2)}-${mo}-${dd}`;
+      return `${mo}-${dd}`;
+    };
+    const estW = hasTime ? (sameDay ? 32 : 46) : period === 'monthly' ? 38 : multiYear || period === 'weekly' ? 54 : 32;
+    const tickN = Math.max(2, Math.min(5, Math.floor(plotW / (estW + 26))));
+    const dateTicks: { x: number; label: string; anchor: 'start' | 'middle' | 'end' }[] = [];
+    if (n > 0) {
+      const used = new Set<number>();
+      for (let i = 0; i < tickN; i++) {
+        const idx = Math.round((i * (n - 1)) / (tickN - 1));
+        if (used.has(idx)) continue;
+        used.add(idx);
+        const anchor = i === 0 ? 'start' : i === tickN - 1 ? 'end' : 'middle';
+        dateTicks.push({
+          x: Math.min(width - PAD_RIGHT, Math.max(PAD_LEFT, xOf(idx))),
+          label: labelOf(visBars[idx]?.date ?? ''),
+          anchor,
+        });
+      }
+    }
+
+    return {
+      plotW, mainH, stepX, cw, asLine, yOf, yToPrice, xOf,
+      subYOf, subTop, plotBottom, subAbsMax, ticks, subVal, dateTicks,
+    };
+  }, [n, visBars, width, height, series, maOverlay, showBoll, showBbi, startIdx, endIdx, subMode, period]);
 
   if (!geom) {
     return (
@@ -213,7 +260,7 @@ export function InteractiveKline({
     );
   }
 
-  const { stepX, cw, asLine, yOf, yToPrice, xOf, subYOf, subTop, ticks, subVal } = geom;
+  const { stepX, cw, asLine, yOf, yToPrice, xOf, subYOf, subTop, plotBottom, ticks, subVal, dateTicks } = geom;
 
   const stepXRef = useRef(stepX);
   stepXRef.current = stepX;
@@ -423,13 +470,18 @@ export function InteractiveKline({
                   </SvgText>
                 </G>
               ))}
+              {/* 与底部日期刻度对齐的竖向网格线（淡），便于对照每根 K 线所属日期 */}
+              {dateTicks.map((t, i) => (
+                <Line key={`vg${i}`} x1={t.x} y1={PAD_TOP} x2={t.x} y2={plotBottom}
+                  stroke={gridColor} strokeWidth={StyleSheet.hairlineWidth} strokeDasharray="2,4" opacity={0.55} />
+              ))}
             </G>
 
             {/* 选中 bar 高亮底色带（§3.1②，2pt 宽半透明，覆盖主图与副图） */}
             {selected !== null && selected >= startIdx && selected < endIdx ? (
               <Rect
                 x={xOf(selected - startIdx) - 1} y={PAD_TOP}
-                width={2} height={height - PAD_TOP}
+                width={2} height={plotBottom - PAD_TOP}
                 fill="#4DA3F5" opacity={0.18}
               />
             ) : null}
@@ -537,14 +589,26 @@ export function InteractiveKline({
                 stroke={gridColor} strokeWidth={StyleSheet.hairlineWidth} />
             </G>
 
+            {/* 底部日期轴（K 线主图与副图共用一条）—— 用户需求：图下方需要显示日期 */}
+            <G>
+              <Line x1={0} y1={plotBottom} x2={width - PAD_RIGHT} y2={plotBottom}
+                stroke={gridColor} strokeWidth={StyleSheet.hairlineWidth} />
+              {dateTicks.map((tk, i) => (
+                <SvgText key={`dt${i}`} x={tk.x} y={plotBottom + 10} fill={axisColor}
+                  fontSize={9} textAnchor={tk.anchor}>
+                  {tk.label}
+                </SvgText>
+              ))}
+            </G>
+
             {/* 十字光标：竖线（吸附 bar 中心） */}
             {selected !== null && selected >= startIdx && selected < endIdx ? (
               <G>
-                <Line x1={xOf(selected - startIdx)} y1={PAD_TOP} x2={xOf(selected - startIdx)} y2={height}
+                <Line x1={xOf(selected - startIdx)} y1={PAD_TOP} x2={xOf(selected - startIdx)} y2={plotBottom}
                   stroke="#FFFFFF" strokeWidth={1} strokeDasharray="3,3" opacity={0.9} />
-                <Line x1={xOf(selected - startIdx) - 3} y1={PAD_TOP} x2={xOf(selected - startIdx) - 3} y2={height}
+                <Line x1={xOf(selected - startIdx) - 3} y1={PAD_TOP} x2={xOf(selected - startIdx) - 3} y2={plotBottom}
                   stroke="#FFFFFF" strokeWidth={0.5} opacity={0.35} />
-                <Line x1={xOf(selected - startIdx) + 3} y1={PAD_TOP} x2={xOf(selected - startIdx) + 3} y2={height}
+                <Line x1={xOf(selected - startIdx) + 3} y1={PAD_TOP} x2={xOf(selected - startIdx) + 3} y2={plotBottom}
                   stroke="#FFFFFF" strokeWidth={0.5} opacity={0.35} />
               </G>
             ) : null}

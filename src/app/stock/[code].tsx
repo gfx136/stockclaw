@@ -545,6 +545,7 @@ export default function StockDetailScreen() {
               showBoll={toggles.boll}
               showBbi={toggles.bbi}
               subMode={subInd}
+              period={period}
               resetToken={resetToken}
               onSelectBar={setSelIdx}
               defaultVisible={defaultBars}
