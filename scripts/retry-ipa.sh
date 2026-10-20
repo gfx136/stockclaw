@@ -19,7 +19,13 @@ WORKFLOW="${WORKFLOW:-build-ipa.yml}"
 OUT_IPA="${OUT_IPA:-/d/ExpoApps/StockClaw-auto.ipa}"
 MAX_ROUNDS="${MAX_ROUNDS:-20}"      # 最多重试轮数
 POLL_SEC="${POLL_SEC:-150}"         # 每轮轮询间隔（秒）
-QUEUE_LIMIT_MIN="${QUEUE_LIMIT_MIN:-14}"  # 排队超过该分钟数即认为拥堵，主动取消重试
+# ⚠️ 关于 QUEUE_LIMIT_MIN（2026-10-21 修正认知）：
+#   GitHub 的 runner 队列是 FIFO 的 —— 主动取消再重新触发，等于把自己排到队尾，
+#   在高峰期只会越排越后，是**反效果**。实测系统自己的回收时机在排队 **16~17 分钟**
+#   （run 39458431610：16:33:05 创建 → 16:49:50 被判 failure，步骤数 0）。
+#   所以阈值设到 17 分钟：在这之前绝不主动轮换，让系统自己决定；
+#   被回收后再重新触发（此时本来也是队尾，没有损失）。
+QUEUE_LIMIT_MIN="${QUEUE_LIMIT_MIN:-17}"  # 排队超过该分钟数才考虑主动轮换
 
 TOKEN=""
 get_token() {
@@ -60,16 +66,43 @@ except Exception:
 
 log() { printf '[%s] %s\n' "$(date +%H:%M:%S)" "$*"; }
 
-# 取最近一次 run 的 id / status / conclusion
-latest_run() {
-  api "/repos/$REPO/actions/runs?per_page=1" | python -c "
+# 取"当前该盯的 run"，输出: id status conclusion created_at
+# ⚠️ 坑3：不能只看 per_page=1 的最新一条。实测会出现「新 run 已触发、但更早的一条
+#    还在 queued」并发两条排队的情况；只看最新一条就会以为没活跃 run 而再 dispatch 一次。
+#    所以：只要列表里还有活跃 run，就优先盯它（取 id 最大的那条）。
+pick_run() {
+  api "/repos/$REPO/actions/runs?per_page=20" | python -c "
 import sys, json
+ACT = ('queued', 'in_progress', 'requested', 'waiting')
 try:
-    r = json.load(sys.stdin)['workflow_runs'][0]
-    print(r['id'], r['status'], r.get('conclusion') or 'null', r['created_at'])
+    runs = json.load(sys.stdin)['workflow_runs']
 except Exception:
-    print('0 none null 0')
+    print('0 none null 0'); raise SystemExit
+if not runs:
+    print('0 none null 0'); raise SystemExit
+act = [r for r in runs if r['status'] in ACT]
+r = max(act, key=lambda x: x['id']) if act else runs[0]
+print(r['id'], r['status'], r.get('conclusion') or 'null', r['created_at'])
 "
+}
+
+# 只保留一个活跃 run，其余全部取消（避免多条并发排队互相占位、也避免重复 dispatch）
+cancel_other_active() {
+  local keep="$1" ids
+  ids=$(api "/repos/$REPO/actions/runs?per_page=20" | python -c "
+import sys, json
+ACT = ('queued', 'in_progress', 'requested', 'waiting')
+try:
+    for r in json.load(sys.stdin)['workflow_runs']:
+        if r['status'] in ACT and str(r['id']) != '$keep':
+            print(r['id'])
+except Exception:
+    pass
+")
+  for id in $ids; do
+    api_post "/repos/$REPO/actions/runs/$id/cancel" >/dev/null
+    log "已取消多余活跃 run $id（保留 $keep）"
+  done
 }
 
 # 取某 run 的 job 步骤数（判断是否"从未执行"）
@@ -183,10 +216,15 @@ main() {
   for round in $(seq 1 "$MAX_ROUNDS"); do
     log "── 第 $round/$MAX_ROUNDS 轮 ──"
 
-    read -r rid status concl created <<<"$(latest_run)"
+    read -r rid status concl created <<<"$(pick_run)"
     if [ "$rid" = "0" ]; then
       log "读取 run 列表失败（网络？），稍后重试"
       sleep "$POLL_SEC"; continue
+    fi
+
+    # 有活跃 run 时，先清掉并发的多余排队 run，只留一个（否则互相占位、还容易被误判）
+    if [ "$status" = "queued" ] || [ "$status" = "in_progress" ]; then
+      cancel_other_active "$rid"
     fi
 
     # 已成功 → 下载交付
