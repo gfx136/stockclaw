@@ -27,7 +27,7 @@ import { fetchQuote } from '@/lib/api/failover';
 import { getDetailName, neighborCode } from '@/lib/detail-nav';
 import { isFavorite, toggleFavorite } from '@/lib/favorites';
 import { useT } from '@/lib/i18n';
-import { fmtChange, fmtPercent, fmtPrice, monthDayTime, upDownColor } from '@/lib/format';
+import { fmtChange, fmtMoney, fmtPercent, fmtPrice, monthDayTime, upDownColor } from '@/lib/format';
 import { indicatorColor } from '@/lib/indicator-palette';
 import { calcAllIndicators, nthLast, snapshotAt } from '@/lib/indicators';
 import { downloadAllPeriods, refreshStockKlines } from '@/lib/kline-downloader';
@@ -387,6 +387,17 @@ export default function StockDetailScreen() {
   const hasPrice = (quote?.price ?? 0) > 0;
   const isFlat = !quote?.changePercent;
 
+  /**
+   * 选中 K 线的动态数据（用户反馈：单击/长按 K 线时，左上角股价位置要像
+   * 同花顺/东财一样动态显示该根 K 线的数据，松手回切实时行情）。
+   * 涨跌额/涨跌幅 = 相对前一根收盘，这与行情软件的十字光标口径一致。
+   */
+  const selBar = selIdx !== null && selIdx >= 0 && selIdx < bars.length ? bars[selIdx] : null;
+  const selPrevClose = selIdx !== null && selIdx > 0 ? bars[selIdx - 1].close : undefined;
+  const selChgAmt = selBar && selPrevClose ? selBar.close - selPrevClose : null;
+  const selChgPct = selChgAmt !== null && selPrevClose ? (selChgAmt / selPrevClose) * 100 : null;
+  const selColor = upDownColor(selChgPct);
+
   return (
     <View style={[styles.container, { backgroundColor: theme.background }]}>
       {/* ① 标题行（紧贴灵动岛下方，无冗余留白；问题6）
@@ -429,11 +440,13 @@ export default function StockDetailScreen() {
         {/* 横屏：价格并入标题行（§4.3） */}
         {landscape ? (
           <View style={styles.landPrice}>
-            <Text style={[styles.landPriceVal, { color: hasPrice ? changeColor : theme.textSecondary }]}>
-              {hasPrice ? fmtPrice(quote?.price) : '--'}
+            <Text style={[styles.landPriceVal, { color: selBar ? selColor : hasPrice ? changeColor : theme.textSecondary }]}>
+              {selBar ? fmtPrice(selBar.close) : hasPrice ? fmtPrice(quote?.price) : '--'}
             </Text>
-            <Text style={[styles.landPriceChg, { color: changeColor }]}>
-              {hasPrice && !isFlat ? `${fmtChange(quote?.changeAmount)} ${fmtPercent(quote?.changePercent)}` : ''}
+            <Text style={[styles.landPriceChg, { color: selBar && selChgPct !== null ? selColor : selBar ? theme.textSecondary : changeColor }]}>
+              {selBar
+                ? (selChgPct !== null ? `${fmtChange(selChgAmt ?? undefined)} ${fmtPercent(selChgPct)}` : selBar.date)
+                : hasPrice && !isFlat ? `${fmtChange(quote?.changeAmount)} ${fmtPercent(quote?.changePercent)}` : ''}
             </Text>
           </View>
         ) : null}
@@ -466,31 +479,66 @@ export default function StockDetailScreen() {
           setViewportH((prev) => (Math.abs(prev - h) > 0.5 ? h : prev));
         }}
       >
-        {/* ② 价格区（横屏已并入标题行） */}
+        {/* ② 价格区（横屏已并入标题行）
+            选中 K 线时动态切换为该根 K 线的数据（同花顺/东财式十字光标联动） */}
         {!landscape ? (
           <View style={[styles.priceBlock, { height: PRICE_H }]}>
-            <View style={styles.priceLeft}>
-              <Text style={[styles.bigPrice, { color: hasPrice ? changeColor : theme.textSecondary }]}>
-                {hasPrice ? fmtPrice(quote?.price) : '--'}
-              </Text>
-              <Text style={[styles.priceChg, { color: hasPrice && !isFlat ? changeColor : theme.textSecondary }]}>
-                {hasPrice && !isFlat ? `${fmtChange(quote?.changeAmount)}  ${fmtPercent(quote?.changePercent)}` : '--'}
-              </Text>
-            </View>
-            <View style={styles.priceRight}>
-              <View style={styles.ohlcRow}>
-                <Text style={[styles.ohlcLabel, { color: theme.textSecondary }]}>{t('detail_open')}</Text>
-                <Text style={[styles.ohlcVal, { color: theme.text }]}>{fmtPrice(quote?.open)}</Text>
-                <Text style={[styles.ohlcLabel, { color: theme.textSecondary }]}>{t('detail_prevClose')}</Text>
-                <Text style={[styles.ohlcVal, { color: theme.text }]}>{fmtPrice(quote?.prevClose)}</Text>
-              </View>
-              <View style={styles.ohlcRow}>
-                <Text style={[styles.ohlcLabel, { color: theme.textSecondary }]}>{t('detail_high')}</Text>
-                <Text style={[styles.ohlcVal, { color: theme.text }]}>{fmtPrice(quote?.high)}</Text>
-                <Text style={[styles.ohlcLabel, { color: theme.textSecondary }]}>{t('detail_low')}</Text>
-                <Text style={[styles.ohlcVal, { color: theme.text }]}>{fmtPrice(quote?.low)}</Text>
-              </View>
-            </View>
+            {selBar ? (
+              <>
+                <View style={styles.priceLeft}>
+                  <Text style={[styles.bigPrice, { color: selColor }]}>
+                    {fmtPrice(selBar.close)}
+                  </Text>
+                  <Text style={[styles.priceChg, { color: selChgPct !== null ? selColor : theme.textSecondary }]}>
+                    {selChgPct !== null
+                      ? `${fmtChange(selChgAmt ?? undefined)}  ${fmtPercent(selChgPct)}`
+                      : '--'}
+                  </Text>
+                  <Text style={[styles.selDate, { color: theme.textSecondary }]} numberOfLines={1}>
+                    {selBar.date}
+                  </Text>
+                </View>
+                <View style={styles.priceRight}>
+                  <View style={styles.ohlcRow}>
+                    <Text style={[styles.ohlcLabel, { color: theme.textSecondary }]}>{t('detail_openBar')}</Text>
+                    <Text style={[styles.ohlcVal, { color: theme.text }]}>{fmtPrice(selBar.open)}</Text>
+                    <Text style={[styles.ohlcLabel, { color: theme.textSecondary }]}>{t('detail_high')}</Text>
+                    <Text style={[styles.ohlcVal, { color: theme.text }]}>{fmtPrice(selBar.high)}</Text>
+                  </View>
+                  <View style={styles.ohlcRow}>
+                    <Text style={[styles.ohlcLabel, { color: theme.textSecondary }]}>{t('detail_low')}</Text>
+                    <Text style={[styles.ohlcVal, { color: theme.text }]}>{fmtPrice(selBar.low)}</Text>
+                    <Text style={[styles.ohlcLabel, { color: theme.textSecondary }]}>{t('detail_volume')}</Text>
+                    <Text style={[styles.ohlcVal, { color: theme.text }]} numberOfLines={1}>{fmtMoney(selBar.volume)}</Text>
+                  </View>
+                </View>
+              </>
+            ) : (
+              <>
+                <View style={styles.priceLeft}>
+                  <Text style={[styles.bigPrice, { color: hasPrice ? changeColor : theme.textSecondary }]}>
+                    {hasPrice ? fmtPrice(quote?.price) : '--'}
+                  </Text>
+                  <Text style={[styles.priceChg, { color: hasPrice && !isFlat ? changeColor : theme.textSecondary }]}>
+                    {hasPrice && !isFlat ? `${fmtChange(quote?.changeAmount)}  ${fmtPercent(quote?.changePercent)}` : '--'}
+                  </Text>
+                </View>
+                <View style={styles.priceRight}>
+                  <View style={styles.ohlcRow}>
+                    <Text style={[styles.ohlcLabel, { color: theme.textSecondary }]}>{t('detail_open')}</Text>
+                    <Text style={[styles.ohlcVal, { color: theme.text }]}>{fmtPrice(quote?.open)}</Text>
+                    <Text style={[styles.ohlcLabel, { color: theme.textSecondary }]}>{t('detail_prevClose')}</Text>
+                    <Text style={[styles.ohlcVal, { color: theme.text }]}>{fmtPrice(quote?.prevClose)}</Text>
+                  </View>
+                  <View style={styles.ohlcRow}>
+                    <Text style={[styles.ohlcLabel, { color: theme.textSecondary }]}>{t('detail_high')}</Text>
+                    <Text style={[styles.ohlcVal, { color: theme.text }]}>{fmtPrice(quote?.high)}</Text>
+                    <Text style={[styles.ohlcLabel, { color: theme.textSecondary }]}>{t('detail_low')}</Text>
+                    <Text style={[styles.ohlcVal, { color: theme.text }]}>{fmtPrice(quote?.low)}</Text>
+                  </View>
+                </View>
+              </>
+            )}
           </View>
         ) : null}
 
@@ -575,6 +623,7 @@ export default function StockDetailScreen() {
               period={period}
               resetToken={resetToken}
               onSelectBar={setSelIdx}
+              hideInfoBar={!landscape}
               defaultVisible={defaultBars}
               isDark={isDark}
               labelBg={isDark ? '#FFFFFF' : theme.text}
@@ -690,6 +739,8 @@ const styles = StyleSheet.create({
   priceLeft: { flex: 0.6, gap: 4 },
   bigPrice: { fontSize: 28, fontWeight: '700', fontVariant: ['tabular-nums'] },
   priceChg: { fontSize: 13, fontVariant: ['tabular-nums'] },
+  // 选中态下日期放在大价格下方（同花顺式联动）
+  selDate: { fontSize: 11, fontVariant: ['tabular-nums'] },
   priceRight: { flex: 0.4, gap: 4 },
   ohlcRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   ohlcLabel: { fontSize: 11, width: 26 },

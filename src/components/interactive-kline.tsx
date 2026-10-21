@@ -52,6 +52,12 @@ interface Props {
   resetToken?: number;
   /** 选中 bar 索引回调（详情页速览/信息条联动） */
   onSelectBar?: (index: number | null) => void;
+  /**
+   * 隐藏图内顶部信息条。
+   * 竖屏详情页的价格区已联动显示所选 K 线数据，图内信息条是重复信息，传入 true 关闭；
+   * 横屏没有价格区，保持 false 由信息条展示。
+   */
+  hideInfoBar?: boolean;
   /** 主题（取指标色用） */
   isDark?: boolean;
   /** y 轴数值标签反色（浅色主题下保证对比度 ≥12:1） */
@@ -78,6 +84,7 @@ export function InteractiveKline({
   subMode = 'volume',
   resetToken,
   onSelectBar,
+  hideInfoBar = false,
   isDark = true,
   labelBg = '#FFFFFF',
   labelFg = '#000000',
@@ -411,7 +418,7 @@ export function InteractiveKline({
    * ⚠️ 判定条件是 `crossActive || selBar`——即**长按十字光标** 与 **单击/点按选中**
    *    两种情况都会显示信息条。图例的显示要取它的反面，二者互斥，不能只判断 crossActive。
    */
-  const showInfoBar = (crossActive || selected !== null) && !!selBar;
+  const showInfoBar = !hideInfoBar && (crossActive || selected !== null) && !!selBar;
 
   /**
    * 选中 K 线的日期标签（画在底部日期带里，跟随光标）。
