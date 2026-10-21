@@ -2,6 +2,7 @@ import * as Clipboard from 'expo-clipboard';
 import { useState } from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
+import { Icon } from '@/components/icon';
 import { useTheme } from '@/hooks/use-theme';
 import { semanticColor } from '@/constants/theme';
 import { fmtPrice } from '@/lib/format';
@@ -116,7 +117,7 @@ export function FullIndicatorSheet({
             </Text>
           </View>
           <Pressable onPress={onClose} hitSlop={10}>
-            <Text style={[styles.close, { color: theme.textSecondary }]}>✕</Text>
+            <Icon name="xmark" size={15} color={theme.textSecondary} weight="semibold" fallbackGlyph="✕" />
           </Pressable>
         </View>
 
@@ -220,7 +221,7 @@ const styles = StyleSheet.create({
   handle: { width: 36, height: 4, borderRadius: 2, backgroundColor: '#8888', alignSelf: 'center', marginTop: 8 },
   head: { flexDirection: 'row', alignItems: 'flex-start', paddingHorizontal: 16, paddingTop: 12 },
   title: { fontSize: 17, fontWeight: '700' },
-  sub: { fontSize: 10, marginTop: 2 },
+  sub: { fontSize: 11, marginTop: 2 },
   close: { fontSize: 18, paddingHorizontal: 4 },
   periodRow: { flexDirection: 'row', gap: 8, paddingHorizontal: 16, paddingVertical: 12 },
   periodBtn: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8 },
@@ -237,7 +238,7 @@ const styles = StyleSheet.create({
   rowNote: { fontSize: 11 },
   ruleRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 5, gap: 12 },
   ruleStatus: { fontSize: 12, fontVariant: ['tabular-nums'] },
-  footnote: { fontSize: 10, lineHeight: 16, marginTop: 4 },
+  footnote: { fontSize: 11, lineHeight: 16, marginTop: 4 },
   footer: { borderTopWidth: StyleSheet.hairlineWidth, padding: 12 },
   copyBtn: {},
   copyBtnInner: { height: 44, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },

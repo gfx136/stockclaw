@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { OfflineBanner } from '@/components/offline-banner';
 import { useTheme } from '@/hooks/use-theme';
 import { fetchFinancialBundle } from '@/lib/api/financial';
 import { semanticColor } from '@/constants/theme';
@@ -76,11 +77,14 @@ export default function RiskScreen() {
   // 风险等级配色（高 → 低：红 → 橙 → 黄 → 绿）
   const levelColor = useCallback(
     (lv: RiskReport['level']) => {
+      // UI 评审修正：原来 mediumHigh / mediumLow 是硬编码的 #F97316 / #84CC16，
+      // 白字仅 1.98:1、作分数文字压卡片仅 1.74:1 —— 那一档的结论基本读不出来。
+      // 现在五档全部走 SemanticColors，两套主题都满足 AA。
       switch (lv) {
         case 'high': return semanticColor('danger', isDark);
-        case 'mediumHigh': return '#F97316';
+        case 'mediumHigh': return semanticColor('mediumHigh', isDark);
         case 'medium': return semanticColor('warning', isDark);
-        case 'mediumLow': return '#84CC16';
+        case 'mediumLow': return semanticColor('mediumLow', isDark);
         default: return semanticColor('success', isDark);
       }
     },
@@ -89,7 +93,7 @@ export default function RiskScreen() {
 
   const renderItem = (it: RiskItem) => {
     return (
-      <View key={it.key} style={[styles.item, { backgroundColor: theme.backgroundElement }]}>
+      <View key={it.key} style={[styles.item, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
         <View style={styles.itemHead}>
           <View style={[styles.itemDot, {
             backgroundColor: it.insufficient
@@ -124,8 +128,10 @@ export default function RiskScreen() {
     <View style={[styles.container, { backgroundColor: theme.background }]}>
       <Stack.Screen options={{ title: t('risk_title') }} />
       <ScrollView contentContainerStyle={[styles.content, { paddingBottom: 32 + insets.bottom }]} showsVerticalScrollIndicator={false}>
+        <OfflineBanner style={{ marginHorizontal: 0, marginBottom: 0 }} />
+
         {/* 顶部：股票 + 安全分 */}
-        <View style={[styles.hero, { backgroundColor: theme.backgroundElement }]}>
+        <View style={[styles.hero, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
           <View style={styles.heroTop}>
             <Text style={[styles.stockName, { color: theme.text }]} numberOfLines={1}>{stockName}</Text>
             <Text style={[styles.stockCode, { color: theme.textSecondary }]}>{code}</Text>
@@ -146,7 +152,7 @@ export default function RiskScreen() {
                   <Text style={[styles.scoreUnit, { color: theme.textSecondary }]}>/ 100</Text>
                 </View>
                 <View style={[styles.levelChip, { backgroundColor: levelColor(report.level) }]}>
-                  <Text style={styles.levelText}>
+                  <Text style={[styles.levelText, { color: theme.onAccent }]}>
                     {lang === 'en' ? LEVEL_LABEL_EN[report.level] : LEVEL_LABEL[report.level]}
                   </Text>
                 </View>
@@ -170,7 +176,7 @@ export default function RiskScreen() {
             <Text style={[styles.sectionTitle, { color: theme.textSecondary }]}>
               {t('risk_analystConsensus')}
             </Text>
-            <View style={[styles.ratingCard, { backgroundColor: theme.backgroundElement }]}>
+            <View style={[styles.ratingCard, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
               <View style={styles.ratingGrid}>
                 <View style={styles.ratingCell}>
                   <Text style={[styles.ratingNum, { color: theme.text }]}>{rating.orgCount}</Text>
@@ -222,7 +228,7 @@ export default function RiskScreen() {
           </View>
         ) : report && !loading ? (
           <View style={styles.section}>
-            <View style={[styles.cleanBox, { backgroundColor: theme.backgroundElement }]}>
+            <View style={[styles.cleanBox, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
               <Text style={[styles.cleanText, { color: semanticColor('success', isDark) }]}>
                 {t('risk_noRisk')}
               </Text>
@@ -256,7 +262,7 @@ export default function RiskScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1 },
   content: { padding: 16, gap: 18 },
-  hero: { borderRadius: 14, padding: 16, gap: 8 },
+  hero: { borderRadius: 12, padding: 16, gap: 8, borderWidth: StyleSheet.hairlineWidth },
   heroTop: { flexDirection: 'row', alignItems: 'baseline', gap: 8 },
   stockName: { fontSize: 20, fontWeight: '700', flexShrink: 1 },
   stockCode: { fontSize: 13, fontVariant: ['tabular-nums'] },
@@ -267,28 +273,28 @@ const styles = StyleSheet.create({
   scoreValue: { fontSize: 44, fontWeight: '700', fontVariant: ['tabular-nums'] },
   scoreUnit: { fontSize: 14 },
   levelChip: { paddingHorizontal: 14, paddingVertical: 6, borderRadius: 8 },
-  levelText: { color: '#fff', fontSize: 14, fontWeight: '700' },
+  levelText: { fontSize: 14, fontWeight: '700' },
   heroMeta: { fontSize: 12 },
   heroWarn: { fontSize: 11 },
   section: { gap: 8 },
   sectionTitle: { fontSize: 12, paddingHorizontal: 2 },
-  item: { borderRadius: 12, padding: 12, gap: 5 },
+  item: { borderRadius: 12, padding: 12, gap: 5, borderWidth: StyleSheet.hairlineWidth },
   itemHead: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   itemDot: { width: 8, height: 8, borderRadius: 4 },
   itemLabel: { fontSize: 14, fontWeight: '600', flex: 1 },
   itemBadge: { fontSize: 12, fontWeight: '600' },
   itemActual: { fontSize: 11, lineHeight: 17 },
   itemNote: { fontSize: 11, lineHeight: 17 },
-  itemCat: { fontSize: 10 },
-  ratingCard: { borderRadius: 12, padding: 14, gap: 10 },
+  itemCat: { fontSize: 11 },
+  ratingCard: { borderRadius: 12, padding: 14, gap: 10, borderWidth: StyleSheet.hairlineWidth },
   ratingGrid: { flexDirection: 'row', flexWrap: 'wrap' },
   ratingCell: { width: '25%', gap: 2 },
   ratingNum: { fontSize: 20, fontWeight: '700', fontVariant: ['tabular-nums'] },
-  ratingLabel: { fontSize: 10 },
+  ratingLabel: { fontSize: 11 },
   ratingTarget: { fontSize: 12, fontVariant: ['tabular-nums'] },
-  ratingNote: { fontSize: 10, lineHeight: 15 },
-  cleanBox: { borderRadius: 12, padding: 16 },
+  ratingNote: { fontSize: 11, lineHeight: 15 },
+  cleanBox: { borderRadius: 12, padding: 16, borderWidth: StyleSheet.hairlineWidth },
   cleanText: { fontSize: 13, textAlign: 'center' },
   disclaimer: { borderTopWidth: StyleSheet.hairlineWidth, paddingTop: 12 },
-  disclaimerText: { fontSize: 10, lineHeight: 16 },
+  disclaimerText: { fontSize: 11, lineHeight: 16 },
 });

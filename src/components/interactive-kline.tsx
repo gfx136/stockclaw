@@ -694,12 +694,12 @@ const styles = StyleSheet.create({
   },
   legendItem: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   legendDot: { width: 8, height: 8, borderRadius: 4 },
-  legendText: { fontSize: 10, fontWeight: '600' },
+  legendText: { fontSize: 11, fontWeight: '600' },
   infoBar: {
     position: 'absolute', left: PAD_LEFT + 2, right: PAD_RIGHT + 2, top: 1, zIndex: 7,
     backgroundColor: 'rgba(0,0,0,0.82)', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3,
   },
-  infoLine1: { color: '#FFFFFF', fontSize: 10, fontVariant: ['tabular-nums'] },
-  infoLine2: { color: '#FFFFFF', fontSize: 10, fontVariant: ['tabular-nums'] },
-  hint: { fontSize: 10, textAlign: 'center', marginTop: 4 },
+  infoLine1: { color: '#FFFFFF', fontSize: 11, fontVariant: ['tabular-nums'] },
+  infoLine2: { color: '#FFFFFF', fontSize: 11, fontVariant: ['tabular-nums'] },
+  hint: { fontSize: 11, textAlign: 'center', marginTop: 4 },
 });

@@ -1,5 +1,7 @@
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
+import { Icon } from '@/components/icon';
+import { TouchTarget } from '@/components/touch-target';
 import { useTheme } from '@/hooks/use-theme';
 import { indicatorColor } from '@/lib/indicator-palette';
 import { useT } from '@/lib/i18n';
@@ -64,9 +66,9 @@ export function IndicatorOverviewStrip({ items, selectDate, landscape = false, o
             {items.map(renderItem)}
           </ScrollView>
           {onOpenFull ? (
-            <Pressable onPress={onOpenFull} hitSlop={8} style={styles.moreBtn}>
-              <Text style={[styles.moreText, { color: theme.textSecondary }]}>⋯</Text>
-            </Pressable>
+            <TouchTarget onPress={onOpenFull} style={styles.moreBtn} accessibilityLabel={t('detail_fullValues')}>
+              <Icon name="ellipsis" size={16} color={theme.textSecondary} weight="bold" fallbackGlyph="⋯" />
+            </TouchTarget>
           ) : null}
         </View>
       ) : (
@@ -78,9 +80,12 @@ export function IndicatorOverviewStrip({ items, selectDate, landscape = false, o
               <Text style={[styles.latestTag, { color: theme.textSecondary }]}>
                 {selectDate ? selectDate : t('common_latest')}
               </Text>
-              <Pressable onPress={onOpenFull} hitSlop={10}>
-                <Text style={[styles.fullLink, { color: theme.textSecondary }]}>{t('detail_fullValues')} ›</Text>
-              </Pressable>
+              <TouchTarget onPress={onOpenFull} style={styles.fullLinkTarget}>
+                <View style={styles.fullLinkRow}>
+                  <Text style={[styles.fullLink, { color: theme.textSecondary }]}>{t('detail_fullValues')}</Text>
+                  <Icon name="chevron.right" size={9} color={theme.textSecondary} weight="semibold" fallbackGlyph="›" />
+                </View>
+              </TouchTarget>
             </View>
           ) : null}
         </>
@@ -100,12 +105,15 @@ const styles = StyleSheet.create({
   dot: { width: 8, height: 8, borderRadius: 4 },
   name: { fontSize: 11 },
   value: { fontSize: 14, fontWeight: '600', fontVariant: ['tabular-nums'] },
-  judge: { fontSize: 10 },
+  judge: { fontSize: 11 },
   landRow: { flexDirection: 'row', alignItems: 'center' },
   landScroll: { alignItems: 'center' },
   moreBtn: { paddingLeft: 6 },
   moreText: { fontSize: 16, fontWeight: '700' },
   footer: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 4, height: 28 },
-  latestTag: { fontSize: 10 },
-  fullLink: { fontSize: 10 },
+  latestTag: { fontSize: 11 },
+  fullLink: { fontSize: 11 },
+  fullLinkRow: { flexDirection: 'row', alignItems: 'center', gap: 2 },
+  // 尾部「全部数值 ›」：文字很小，命中区靠 TouchTarget 撑到 44pt
+  fullLinkTarget: { minWidth: 44 },
 });

@@ -2,6 +2,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
 import { Spacing } from '@/constants/theme';
+import { TouchTarget } from '@/components/touch-target';
 import { useTheme } from '@/hooks/use-theme';
 import { CAP_TIER_LABELS, type MarketCapTier, type SignalCondition } from '@/types/stock';
 
@@ -44,7 +45,7 @@ export function Chips<T extends string>({
               ]}>
               <ThemedText
                 type={active ? 'smallBold' : 'small'}
-                style={active ? styles.chipTextActive : undefined}
+                style={active ? { color: theme.onAccent } : undefined}
                 themeColor={active ? undefined : 'textSecondary'}>
                 {o.label}
               </ThemedText>
@@ -79,9 +80,9 @@ export function CapTierPicker({
           { value: 'small', label: CAP_TIER_LABELS.small },
         ]}
       />
-      <Pressable onPress={() => onChange(allOn ? undefined : ALL)} hitSlop={6}>
+      <TouchTarget onPress={() => onChange(allOn ? undefined : ALL)}>
         <Text style={{ fontSize: 13, color: allOn ? theme.tint : theme.textSecondary }}>全选</Text>
-      </Pressable>
+      </TouchTarget>
     </View>
   );
 }
@@ -163,7 +164,7 @@ export function BBIPicker({
                 ]}>
                 <ThemedText
                   type={on ? 'smallBold' : 'small'}
-                  style={on ? styles.chipTextActive : undefined}
+                  style={on ? { color: theme.onAccent } : undefined}
                   themeColor={on ? undefined : 'textSecondary'}>
                   {o.label}
                 </ThemedText>
@@ -223,7 +224,7 @@ export function SignalPicker({
               ]}>
               <ThemedText
                 type={on ? 'smallBold' : 'small'}
-                style={on ? styles.chipTextActive : undefined}
+                style={on ? { color: theme.onAccent } : undefined}
                 themeColor={on ? undefined : 'textSecondary'}>
                 {o.label}
               </ThemedText>
@@ -276,7 +277,7 @@ export function ExclusionPicker({
               ]}>
               <ThemedText
                 type={on ? 'smallBold' : 'small'}
-                style={on ? styles.chipTextActive : undefined}
+                style={on ? { color: theme.onAccent } : undefined}
                 themeColor={on ? undefined : 'textSecondary'}>
                 {o.label}
               </ThemedText>
@@ -310,10 +311,11 @@ const styles = StyleSheet.create({
   },
   chip: {
     paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.one + 2,
+    // UI 评审：原 6pt 内边距让条件 chip 视觉高仅 29pt（含 hitSlop 37pt），低于 44pt。
+    // 提到 10pt 后视觉高 37pt，配合 hitSlop 4 达到 45pt，且不破坏 chip 的轻量感。
+    paddingVertical: Spacing.two + 2,
     borderRadius: Spacing.three,
   },
-  chipTextActive: { color: '#ffffff' },
   bbiBox: { gap: 10 },
   bbiGroup: { gap: 6 },
   bbiGroupLabel: { fontSize: 12 },

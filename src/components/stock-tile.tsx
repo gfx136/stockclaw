@@ -1,6 +1,7 @@
 import { memo } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
+import { Icon } from '@/components/icon';
 import { useTheme } from '@/hooks/use-theme';
 import { fmtMoney, fmtPrice, upDownColor } from '@/lib/format';
 import type { Stock } from '@/types/stock';
@@ -80,9 +81,13 @@ export const StockTile = memo(function StockTile({ stock, isFav, onPress, onTogg
         hitSlop={10}
         style={styles.star}
         accessibilityLabel="自选">
-        <Text style={[styles.starText, { color: isFav ? theme.tint : theme.textSecondary }]}>
-          {isFav ? '★' : '☆'}
-        </Text>
+        <Icon
+          name={isFav ? 'star.fill' : 'star'}
+          size={19}
+          color={isFav ? theme.tint : theme.textSecondary}
+          weight="regular"
+          fallbackGlyph={isFav ? '★' : '☆'}
+        />
       </Pressable>
     </Pressable>
   );
@@ -99,7 +104,7 @@ const styles = StyleSheet.create({
   col: { justifyContent: 'center' },
   right: { alignItems: 'flex-end' },
   code: { fontSize: 13, fontVariant: ['tabular-nums'] },
-  codePrefix: { fontSize: 10, opacity: 0.6 },
+  codePrefix: { fontSize: 11, opacity: 0.6 },
   name: { fontSize: 15, fontWeight: '600' },
   price: { fontSize: 17, fontWeight: '600', fontVariant: ['tabular-nums'] },
   chg: { fontSize: 12, fontVariant: ['tabular-nums'] },

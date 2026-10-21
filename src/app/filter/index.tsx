@@ -15,6 +15,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { CapTierPicker, ExclusionPicker, SectionTitle } from '@/components/filter-controls';
 import { RulePicker } from '@/components/rule-picker';
 import { ThemedText } from '@/components/themed-text';
+import { OfflineBanner } from '@/components/offline-banner';
+import { TouchTarget } from '@/components/touch-target';
 import { useTheme } from '@/hooks/use-theme';
 import { useT } from '@/lib/i18n';
 import { hasAnyRules } from '@/lib/filter-engine';
@@ -117,20 +119,22 @@ export default function FilterScreen() {
     <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]} edges={['bottom']}>
       {/* 顶部操作行：清空 / 运行（标题已由系统 header 显示，此处不再重复） */}
       <View style={styles.topBar}>
-        <Pressable onPress={clearAll} hitSlop={8}>
+        <TouchTarget onPress={clearAll}>
           <ThemedText type="small" themeColor="textSecondary">{t('filter_clear')}</ThemedText>
-        </Pressable>
+        </TouchTarget>
         <View style={styles.topSpacer} />
         {running ? (
-          <Pressable onPress={goBackground} hitSlop={8}>
+          <TouchTarget onPress={goBackground}>
             <ThemedText type="small" style={{ color: theme.tint }}>{t('filter_bgRun')}</ThemedText>
-          </Pressable>
+          </TouchTarget>
         ) : (
-          <Pressable onPress={run} hitSlop={8}>
+          <TouchTarget onPress={run}>
             <ThemedText type="smallBold" style={{ color: theme.tint }}>{t('filter_run')}</ThemedText>
-          </Pressable>
+          </TouchTarget>
         )}
       </View>
+
+      <OfflineBanner />
 
       {/* 运行进度条（用户反馈3）：阶段文案 + 百分比 + 进度条
           点右上角「后台运行」可关掉本面板，筛选在后台继续，结果页顶部会显示同一条进度 */}
@@ -164,11 +168,11 @@ export default function FilterScreen() {
             <SectionTitle>{t('filter_presets')}</SectionTitle>
             <View style={styles.chipRow}>
               {savedSets.map((s) => (
-                <Pressable key={s.name} onPress={() => applySet(s)} hitSlop={4}>
+                <TouchTarget key={s.name} onPress={() => applySet(s)}>
                   <View style={[styles.chip, { backgroundColor: theme.backgroundElement }]}>
                     <Text style={[styles.chipText, { color: theme.text }]}>{s.name}</Text>
                   </View>
-                </Pressable>
+                </TouchTarget>
               ))}
             </View>
           </View>
@@ -304,7 +308,8 @@ const styles = StyleSheet.create({
   container: { flex: 1 },
   topBar: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: 16, paddingVertical: 8,
+    // 左右内边距收到 6：按钮自带 44pt 命中区，视觉上的 16pt 边距由按钮内部留白补齐
+    paddingHorizontal: 6,
   },
   topSpacer: { flex: 1 },
   progressWrap: { paddingHorizontal: 16, paddingBottom: 10 },

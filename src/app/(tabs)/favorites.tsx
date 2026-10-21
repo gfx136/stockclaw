@@ -1,9 +1,11 @@
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { ActivityIndicator, Alert, FlatList, StyleSheet, View } from 'react-native';
+import { Pressable, ActivityIndicator, Alert, FlatList, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { StockTile } from '@/components/stock-tile';
+import { Icon } from '@/components/icon';
+import { OfflineBanner } from '@/components/offline-banner';
 import { ThemedText } from '@/components/themed-text';
 import { useTheme } from '@/hooks/use-theme';
 import { fetchAllStocks } from '@/lib/api/failover';
@@ -84,12 +86,19 @@ export default function FavoritesScreen() {
     return (
       <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]} edges={['top']}>
         <View style={styles.titleRow}>
-          <ThemedText type="subtitle">{t('fav_title')}</ThemedText>
+          <ThemedText type="navTitle">{t('fav_title')}</ThemedText>
         </View>
         <View style={styles.center}>
+          <Icon name="star" size={34} color={theme.textSecondary} weight="regular" fallbackGlyph="☆" />
           <ThemedText type="small" themeColor="textSecondary" style={styles.emptyText}>
             {t('fav_empty')}
           </ThemedText>
+          {/* UI 评审：空态原来只有文案，没有出口 */}
+          <Pressable onPress={() => router.replace('/(tabs)')}>
+            <View style={[styles.emptyAction, { backgroundColor: theme.backgroundElement }]}>
+              <ThemedText type="smallBold" style={{ color: theme.tint }}>{t('fav_emptyAction')}</ThemedText>
+            </View>
+          </Pressable>
         </View>
       </SafeAreaView>
     );
@@ -99,9 +108,10 @@ export default function FavoritesScreen() {
     <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]} edges={['top']}>
       {/* 页面标题（问题3：去掉系统导航栏后需自绘，与其它 tab 页一致） */}
       <View style={styles.titleRow}>
-        <ThemedText type="subtitle">{t('fav_title')}</ThemedText>
+        <ThemedText type="navTitle">{t('fav_title')}</ThemedText>
         {loading ? <ActivityIndicator size="small" /> : null}
       </View>
+      <OfflineBanner style={{ marginTop: 8 }} />
       <View style={styles.headRow}>
         <ThemedText type="code" themeColor="textSecondary">
           {tf('fav_countHint', { n: favorites.length })}
@@ -133,7 +143,8 @@ export default function FavoritesScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12 },
+  emptyAction: { height: 40, borderRadius: 20, paddingHorizontal: 20, alignItems: 'center', justifyContent: 'center' },
   emptyText: { textAlign: 'center', lineHeight: 22 },
   titleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingTop: 4 },
   headRow: {

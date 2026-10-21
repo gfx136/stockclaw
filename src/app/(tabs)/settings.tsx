@@ -3,6 +3,7 @@ import { useCallback, useState, useSyncExternalStore } from 'react';
 import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { Icon } from '@/components/icon';
 import { ThemedText } from '@/components/themed-text';
 import { semanticColor } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -171,7 +172,7 @@ export default function SettingsScreen() {
     <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]} edges={['top']}>
       {/* 页面标题（紧贴安全区，不留额外空白） */}
       <View style={styles.pageHead}>
-        <ThemedText type="subtitle">{t('settings_title')}</ThemedText>
+        <ThemedText type="navTitle">{t('settings_title')}</ThemedText>
       </View>
       <ScrollView contentContainerStyle={styles.content}>
 
@@ -309,7 +310,7 @@ export default function SettingsScreen() {
               </View>
               {dlState.running || dlState.preparing
                 ? <ActivityIndicator size="small" />
-                : <Text style={[styles.rowValue, { color: theme.textSecondary }]}>›</Text>}
+                : <Icon name="chevron.right" size={13} color={theme.textSecondary} weight="semibold" fallbackGlyph="›" />}
             </View>
           </Pressable>
 
@@ -320,7 +321,7 @@ export default function SettingsScreen() {
                 <Text style={[styles.rowLabel, { color: theme.text }]}>{t('settings_localDataManage')}</Text>
                 <Text style={[styles.sourceDesc, { color: theme.textSecondary }]}>{t('settings_localDataManageDesc')}</Text>
               </View>
-              <Text style={[styles.rowValue, { color: theme.textSecondary }]}>›</Text>
+              <Icon name="chevron.right" size={13} color={theme.textSecondary} weight="semibold" fallbackGlyph="›" />
             </View>
           </Pressable>
 
@@ -446,7 +447,7 @@ function Section({ title, theme, children }: {
   return (
     <View style={styles.section}>
       <Text style={[styles.sectionTitle, { color: theme.textSecondary }]}>{title}</Text>
-      <View style={[styles.sectionBody, { backgroundColor: theme.backgroundElement }]}>{children}</View>
+      <View style={[styles.sectionBody, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>{children}</View>
     </View>
   );
 }
@@ -506,8 +507,10 @@ const styles = StyleSheet.create({
   content: { paddingHorizontal: 16, gap: 20, paddingBottom: 40 },
   title: { marginBottom: 4 },
   section: { gap: 8 },
-  sectionTitle: { fontSize: 12, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.5 },
-  sectionBody: { borderRadius: 12, overflow: 'hidden' },
+  // 中文没有大小写，uppercase 无效；letterSpacing 反而让中文标题比正文更松
+  sectionTitle: { fontSize: 12, fontWeight: '600' },
+  // 卡片层级不能只靠 1.14:1 的底色差，补一条 hairline 描边
+  sectionBody: { borderRadius: 12, overflow: 'hidden', borderWidth: StyleSheet.hairlineWidth },
   row: {
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
     paddingHorizontal: 14, paddingVertical: 13, gap: 12,
@@ -524,7 +527,7 @@ const styles = StyleSheet.create({
   speedName: { fontSize: 13 },
   speedVal: { fontSize: 13, fontWeight: '600', fontVariant: ['tabular-nums'] },
   speedSet: { fontSize: 12, fontWeight: '600', marginLeft: 8 },
-  speedNote: { fontSize: 10, marginTop: 6 },
+  speedNote: { fontSize: 11, marginTop: 6 },
   segRow: { flexDirection: 'row', padding: 6, gap: 6 },
   segBtnWrap: { flex: 1 },
   segBtn: { paddingVertical: 8, borderRadius: 8, alignItems: 'center' },
@@ -532,7 +535,7 @@ const styles = StyleSheet.create({
   progressTrack: { height: 4, borderRadius: 2, marginTop: 8, overflow: 'hidden' },
   dlDetail: { fontSize: 11, marginTop: 4, fontVariant: ['tabular-nums'] },
   progressFill: { height: 4, borderRadius: 2 },
-  dlNote: { fontSize: 10, marginTop: 4, lineHeight: 14 },
+  dlNote: { fontSize: 11, marginTop: 4, lineHeight: 14 },
   sliderRow: { flexDirection: 'row', gap: 8, paddingHorizontal: 14, paddingBottom: 12 },
   sliderItem: { flex: 1 },
   sliderChip: { height: 34, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },

@@ -1,5 +1,6 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
+import { Icon } from '@/components/icon';
 import { useTheme } from '@/hooks/use-theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { indicatorColor } from '@/lib/indicator-palette';
@@ -144,7 +145,7 @@ export function RulePicker({
                   <Text style={[styles.selectedLabel, { color: theme.text }]}>{ruleLabel(r)}</Text>
                 </View>
                 <Pressable onPress={() => removeRule(r)} hitSlop={6}>
-                  <Text style={[styles.removeBtn, { color: theme.textSecondary }]}>✕</Text>
+                  <Icon name="xmark.circle.fill" size={15} color={theme.textSecondary} weight="regular" fallbackGlyph="✕" />
                 </Pressable>
               </View>
               <Text style={[styles.periodTag, { color: theme.textSecondary }]}>{periodLabelOf(r.kind)}</Text>

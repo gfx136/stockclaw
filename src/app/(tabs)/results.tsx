@@ -5,6 +5,9 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { StockTile } from '@/components/stock-tile';
 import { ThemedText } from '@/components/themed-text';
+import { Icon } from '@/components/icon';
+import { OfflineBanner } from '@/components/offline-banner';
+import { TouchTarget } from '@/components/touch-target';
 import { useTheme } from '@/hooks/use-theme';
 import { loadFavorites, toggleFavorite } from '@/lib/favorites';
 import { setDetailList } from '@/lib/detail-nav';
@@ -67,15 +70,15 @@ export default function ResultsScreen() {
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]} edges={['top']}>
       <View style={styles.header}>
-        <ThemedText type="subtitle">{t('results_title')}</ThemedText>
+        <ThemedText type="navTitle">{t('results_title')}</ThemedText>
         {output ? (
           <>
             <ThemedText type="small" themeColor="textSecondary">
-              命中 {filtered.length} 只
+              {tf('results_hits', { n: filtered.length })}
             </ThemedText>
-            <Pressable onPress={handleClear} hitSlop={8}>
+            <TouchTarget onPress={handleClear}>
               <ThemedText type="small" style={{ color: theme.tint }}>{t('common_clear')}</ThemedText>
-            </Pressable>
+            </TouchTarget>
           </>
         ) : null}
       </View>
@@ -100,12 +103,21 @@ export default function ResultsScreen() {
         </View>
       ) : null}
 
+      <OfflineBanner />
+
       {!output ? (
         <View style={styles.center}>
-          <Text style={styles.emptyIcon}>📋</Text>
+          <Icon name="list.bullet.rectangle" size={34} color={theme.textSecondary} weight="regular" fallbackGlyph="📋" />
           <ThemedText type="small" themeColor="textSecondary" style={styles.emptyText}>
             {t('results_emptyHint')}
           </ThemedText>
+          {/* UI 评审：空态原来只有一句「暂无数据」，没有出口。
+              后台筛选跑完为空时，用户最需要的就是回到条件页改条件。 */}
+          <Pressable onPress={() => router.push('/filter')}>
+            <View style={[styles.emptyAction, { backgroundColor: theme.backgroundElement }]}>
+              <ThemedText type="smallBold" style={{ color: theme.tint }}>{t('results_emptyAction')}</ThemedText>
+            </View>
+          </Pressable>
         </View>
       ) : (
         <>
@@ -144,7 +156,7 @@ export default function ResultsScreen() {
                     <View style={styles.hitRow}>
                       {item.hits.map((h) => (
                         <View key={h} style={[styles.hitChip, { backgroundColor: theme.tint }]}>
-                          <Text style={styles.hitText}>{h}</Text>
+                          <Text style={[styles.hitText, { color: theme.onAccent }]}>{h}</Text>
                         </View>
                       ))}
                     </View>
@@ -169,6 +181,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16, paddingTop: 4, paddingBottom: 6,
   },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12 },
+  emptyAction: { height: 40, borderRadius: 20, paddingHorizontal: 20, alignItems: 'center', justifyContent: 'center' },
   runBanner: { paddingHorizontal: 16, paddingBottom: 10 },
   runBannerHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 },
   runBannerText: { flex: 1, marginRight: 8 },
@@ -181,6 +194,6 @@ const styles = StyleSheet.create({
   list: { paddingBottom: 24 },
   hitRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 4, paddingHorizontal: 16, paddingBottom: 8 },
   hitChip: { paddingHorizontal: 8, paddingVertical: 1, borderRadius: 4 },
-  hitText: { color: '#ffffff', fontSize: 11, lineHeight: 16 },
+  hitText: { fontSize: 11, lineHeight: 16 },
   sep: { height: StyleSheet.hairlineWidth, marginLeft: 16 },
 });

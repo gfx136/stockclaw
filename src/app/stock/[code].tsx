@@ -19,6 +19,8 @@ import { FullIndicatorSheet, type BbiRuleResult } from '@/components/full-indica
 import { IndicatorOverviewStrip, type OverviewItem } from '@/components/indicator-overview';
 import { InteractiveKline, type SubMode } from '@/components/interactive-kline';
 import { ThemedText } from '@/components/themed-text';
+import { Icon } from '@/components/icon';
+import { TouchTarget } from '@/components/touch-target';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useTheme } from '@/hooks/use-theme';
 import { fetchQuote } from '@/lib/api/failover';
@@ -341,7 +343,7 @@ export default function StockDetailScreen() {
   }, [bars, weeklyBars]);
 
   const PRICE_H = landscape ? 0 : 60;
-  const OPT_H = landscape ? 36 : 40;
+  const OPT_H = 44;   // UI 评审：选项行按钮需 44pt 命中区，行高同步提到 44
   const STRIP_H = landscape ? 56 : 118;
   const STATUS_H = landscape ? 0 : 22;
 
@@ -390,9 +392,9 @@ export default function StockDetailScreen() {
       {/* ① 标题行（紧贴灵动岛下方，无冗余留白；问题6）
           左段仅一个返回箭头（去掉"返回"二字，避免与系统返回重复感） */}
       <View style={[styles.titleRow, { paddingTop: insets.top, borderBottomColor: theme.border }]}>
-        <Pressable onPress={() => router.back()} hitSlop={10} style={styles.backBtn} accessibilityLabel={t('common_back')}>
-          <Text style={[styles.backText, { color: theme.tint }]}>‹</Text>
-        </Pressable>
+        <TouchTarget onPress={() => router.back()} accessibilityLabel={t('common_back')} style={styles.backBtn}>
+          <Icon name="chevron.left" size={19} color={theme.tint} weight="semibold" fallbackGlyph="‹" />
+        </TouchTarget>
 
         {/* 中段：◀ 名称+代码 ▶（整体居中，长名省略不挤压箭头） */}
         <View style={styles.midSeg}>
@@ -403,7 +405,7 @@ export default function StockDetailScreen() {
             hitSlop={{ top: 12, bottom: 12, left: 10, right: 10 }}
             style={styles.arrowBtn}
             accessibilityLabel={t('detail_prev')}>
-            <Text style={[styles.arrow, { color: theme.text }]}>◀</Text>
+            <Icon name="chevron.left" size={13} color={theme.textSecondary} weight="semibold" fallbackGlyph="◀" />
           </Pressable>
           <View style={styles.nameBlock}>
             <Text style={[styles.stockName, { color: theme.text }]} numberOfLines={1} ellipsizeMode="tail">
@@ -420,7 +422,7 @@ export default function StockDetailScreen() {
             hitSlop={{ top: 12, bottom: 12, left: 10, right: 10 }}
             style={styles.arrowBtn}
             accessibilityLabel={t('detail_next')}>
-            <Text style={[styles.arrow, { color: theme.text }]}>▶</Text>
+            <Icon name="chevron.right" size={13} color={theme.textSecondary} weight="semibold" fallbackGlyph="▶" />
           </Pressable>
         </View>
 
@@ -443,13 +445,13 @@ export default function StockDetailScreen() {
             hitSlop={8}
             style={styles.iconBtn}
             accessibilityLabel={t('risk_entry')}>
-            <Text style={[styles.icon, { color: theme.tint }]}>🛡</Text>
+            <Icon name="shield.lefthalf.filled" size={19} color={theme.tint} weight="regular" fallbackGlyph="🛡" />
           </Pressable>
-          <Pressable onPress={handleToggleFav} hitSlop={8} style={styles.iconBtn} accessibilityLabel={t('detail_addFav')}>
-            <Text style={[styles.icon, { color: fav ? theme.tint : theme.text }]}>{fav ? '★' : '☆'}</Text>
+          <Pressable onPress={handleToggleFav} hitSlop={8} style={styles.iconBtn} accessibilityLabel={t('detail_addFav')} accessibilityState={{ selected: fav }}>
+            <Icon name={fav ? 'star.fill' : 'star'} size={19} color={fav ? theme.tint : theme.text} weight="regular" fallbackGlyph={fav ? '★' : '☆'} />
           </Pressable>
           <Pressable onPress={onShare} hitSlop={8} style={styles.iconBtn} accessibilityLabel={t('common_share')}>
-            <Text style={[styles.icon, { color: theme.text }]}>⤴</Text>
+            <Icon name="square.and.arrow.up" size={19} color={theme.text} weight="regular" fallbackGlyph="⤴" />
           </Pressable>
         </View>
       </View>
@@ -498,33 +500,46 @@ export default function StockDetailScreen() {
             {PERIODS.map((p) => {
               const on = p.key === period;
               return (
-                <Pressable key={p.key} onPress={() => { setPeriod(p.key); Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); }} hitSlop={4}>
+                <TouchTarget
+                  key={p.key}
+                  onPress={() => { setPeriod(p.key); Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); }}
+                  accessibilityLabel={t(p.labelKey as never)}
+                  selected={on}>
                   <View style={[styles.periodBtn, { backgroundColor: on ? theme.tint : 'transparent' }]}>
-                    <Text style={[styles.periodText, { color: on ? '#fff' : theme.text }]}>
+                    <Text
+                      numberOfLines={1}
+                      style={[styles.periodText, { color: on ? theme.onAccent : theme.text }]}>
                       {landscape ? t(p.shortKey as never) : t(p.labelKey as never)}
                     </Text>
                   </View>
-                </Pressable>
+                </TouchTarget>
               );
             })}
           </View>
           <View style={styles.optSpacer} />
-          <Pressable onPress={() => setIndOpen(true)} hitSlop={8}>
-            <Text style={[styles.optBtn, { color: theme.tint }]}>{t('detail_indicators')} ▾</Text>
-          </Pressable>
-          <Pressable onPress={() => { setResetToken((t) => t + 1); Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); }} hitSlop={8}>
+          <TouchTarget onPress={() => setIndOpen(true)} accessibilityLabel={t('detail_indicators')}>
+            <View style={styles.indBtnInner}>
+              <Text style={[styles.optBtn, { color: theme.tint }]}>{t('detail_indicators')}</Text>
+              <Icon name="chevron.down" size={9} color={theme.tint} weight="semibold" fallbackGlyph="▾" />
+            </View>
+          </TouchTarget>
+          <TouchTarget
+            onPress={() => { setResetToken((t) => t + 1); Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); }}
+            accessibilityLabel={t('detail_reset')}>
             <Text style={[styles.optBtn, { color: theme.text }]}>{t('detail_reset')}</Text>
-          </Pressable>
-          <Pressable onPress={toggleLandscape} hitSlop={8} accessibilityLabel={t('detail_rotate')}>
+          </TouchTarget>
+          <TouchTarget
+            onPress={toggleLandscape}
+            accessibilityLabel={landscape ? t('detail_portrait') : t('detail_landscape')}>
             {/* 原来只有一个 ⤢ 字形，系统字体缺字时会变成看不见的空白，
-                用户就以为"旋转功能不见了"。改成文字标签，任何字体都能显示。 */}
+                用户就以为"旋转功能不见了"。保留文字标签，任何字体都能显示。 */}
             <Text style={[styles.optBtn, { color: theme.text }]}>
               {landscape ? t('detail_portrait') : t('detail_landscape')}
             </Text>
-          </Pressable>
-          <Pressable onPress={onDownload} disabled={downloading} hitSlop={8}>
+          </TouchTarget>
+          <TouchTarget onPress={onDownload} disabled={downloading} accessibilityLabel={t('detail_download')}>
             {downloading ? <ActivityIndicator size="small" /> : <Text style={[styles.optBtn, { color: theme.tint }]}>{t('detail_download')}</Text>}
-          </Pressable>
+          </TouchTarget>
         </View>
 
         {tip ? (
@@ -534,7 +549,7 @@ export default function StockDetailScreen() {
         ) : null}
 
         {/* ④ 图表区（K线主图 + 副图，比例 3.4:1） */}
-        <View style={[styles.chartCard, { backgroundColor: theme.backgroundElement, marginHorizontal: 16 }]}>
+        <View style={[styles.chartCard, { backgroundColor: theme.backgroundElement, marginHorizontal: 16, borderColor: theme.border }]}>
           {loading && bars.length === 0 ? (
             <View style={[styles.chartLoading, { height: chartTotalH }]}><ActivityIndicator /></View>
           ) : bars.length === 0 ? (
@@ -564,7 +579,7 @@ export default function StockDetailScreen() {
               isDark={isDark}
               labelBg={isDark ? '#FFFFFF' : theme.text}
               labelFg={isDark ? '#000000' : theme.background}
-              gridColor={theme.border}
+              gridColor={theme.chartGrid}
               axisColor={theme.textSecondary}
               textColor={theme.text}
             />
@@ -651,9 +666,11 @@ const styles = StyleSheet.create({
   container: { flex: 1 },
   titleRow: {
     flexDirection: 'row', alignItems: 'center',
-    paddingHorizontal: 8, paddingBottom: 4, borderBottomWidth: StyleSheet.hairlineWidth,
+    // 全 App 左右边距都是 16；这里原来写 8，返回箭头比下方价格区更贴边。
+    // 改回 4 并让返回按钮自带 12 内边距，图标光学重心落回 16 网格。
+    paddingHorizontal: 4, paddingBottom: 4, borderBottomWidth: StyleSheet.hairlineWidth,
   },
-  backBtn: { minWidth: 34, height: 40, justifyContent: 'center', alignItems: 'center' },
+  backBtn: { minWidth: 34, paddingHorizontal: 12 },
   backText: { fontSize: 26, lineHeight: 30, fontWeight: '300' },
   midSeg: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 12 },
   arrowBtn: { width: 32, height: 32, alignItems: 'center', justifyContent: 'center' },
@@ -663,7 +680,7 @@ const styles = StyleSheet.create({
   stockCode: { fontSize: 12, fontVariant: ['tabular-nums'], flexShrink: 0 },
   landPrice: { alignItems: 'flex-end', marginRight: 12, gap: 1 },
   landPriceVal: { fontSize: 18, fontWeight: '700', fontVariant: ['tabular-nums'] },
-  landPriceChg: { fontSize: 10, fontVariant: ['tabular-nums'] },
+  landPriceChg: { fontSize: 11, fontVariant: ['tabular-nums'] },
   rightSeg: { flexDirection: 'row', alignItems: 'center', gap: 4, marginRight: 4 },
   iconBtn: { width: 32, height: 32, alignItems: 'center', justifyContent: 'center' },
   icon: { fontSize: 18 },
@@ -677,20 +694,22 @@ const styles = StyleSheet.create({
   ohlcRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   ohlcLabel: { fontSize: 11, width: 26 },
   ohlcVal: { fontSize: 11, fontVariant: ['tabular-nums'], width: 46 },
-  optionBar: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, gap: 10 },
-  periodSeg: { flexDirection: 'row', gap: 4 },
-  periodBtn: { paddingHorizontal: 7, paddingVertical: 5, borderRadius: 8 },
+  optionBar: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, gap: 6 },
+  // flexShrink 让 4 个周期按钮在极窄屏上先压缩、而不是把右边按钮挤出屏幕
+  periodSeg: { flexDirection: 'row', gap: 2, flexShrink: 1 },
+  periodBtn: { paddingHorizontal: 5, paddingVertical: 5, borderRadius: 8 },
   periodText: { fontSize: 13, fontWeight: '600' },
   optSpacer: { flex: 1 },
   optBtn: { fontSize: 13, fontWeight: '600' },
+  indBtnInner: { flexDirection: 'row', alignItems: 'center', gap: 3 },
   tipBox: { marginHorizontal: 16, marginBottom: 6, padding: 10, borderRadius: 8 },
-  chartCard: { borderRadius: 14, padding: 8, justifyContent: 'center' },
+  chartCard: { borderRadius: 12, padding: 8, justifyContent: 'center', borderWidth: StyleSheet.hairlineWidth },
   chartLoading: { alignItems: 'center', justifyContent: 'center', gap: 8 },
   noData: { textAlign: 'center' },
   dlHint: { fontSize: 13, fontWeight: '600' },
   stripWrap: { marginTop: 12 },
   statusBar: { height: 28, justifyContent: 'center', alignItems: 'center', marginTop: 8 },
-  statusText: { fontSize: 10 },
+  statusText: { fontSize: 11 },
   indMask: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', padding: 24 },
   indPanel: { borderRadius: 14, padding: 16, gap: 10 },
   indPanelTitle: { fontSize: 13, fontWeight: '600' },

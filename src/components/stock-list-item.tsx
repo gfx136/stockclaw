@@ -1,6 +1,8 @@
 import { memo } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
+import { Icon } from '@/components/icon';
+import { TouchTarget } from '@/components/touch-target';
 import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { fmtMoney, fmtPercent, fmtPrice, upDownColor } from '@/lib/format';
@@ -37,8 +39,8 @@ export const StockListItem = memo(function StockListItem({
       delayLongPress={350}
       style={({ pressed }) => [styles.row, pressed && styles.pressed]}>
       {/* 评分徽章（蓝色圆）。算法待确认，先占位 */}
-      <View style={styles.scoreBadge}>
-        <Text style={styles.scoreText}>{score !== undefined ? score : '—'}</Text>
+      <View style={[styles.scoreBadge, { backgroundColor: theme.tint }]}>
+        <Text style={[styles.scoreText, { color: theme.onAccent }]}>{score !== undefined ? score : '—'}</Text>
       </View>
 
       {/* 名称 + 代码 */}
@@ -63,9 +65,9 @@ export const StockListItem = memo(function StockListItem({
       </View>
 
       {/* 更多菜单 */}
-      <Pressable onPress={() => onMenu?.(stock)} hitSlop={8} style={styles.menu}>
-        <Text style={[styles.menuText, { color: theme.textSecondary }]}>⋮</Text>
-      </Pressable>
+      <TouchTarget onPress={() => onMenu?.(stock)} accessibilityLabel="更多">
+        <Icon name="ellipsis" size={18} color={theme.textSecondary} weight="bold" fallbackGlyph="⋮" />
+      </TouchTarget>
     </Pressable>
   );
 });
@@ -83,11 +85,10 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: '#208AEF',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  scoreText: { color: '#fff', fontSize: 13, fontWeight: '600', fontVariant: ['tabular-nums'] },
+  scoreText: { fontSize: 13, fontWeight: '600', fontVariant: ['tabular-nums'] },
   mid: { flex: 1, gap: 2 },
   name: { fontSize: 15, fontWeight: '600' },
   code: { fontSize: 12, fontVariant: ['tabular-nums'] },
@@ -96,6 +97,5 @@ const styles = StyleSheet.create({
   priceRow: { flexDirection: 'row', alignItems: 'baseline', gap: 8 },
   pct: { fontSize: 12, fontWeight: '500', fontVariant: ['tabular-nums'] },
   price: { fontSize: 16, fontWeight: '600', fontVariant: ['tabular-nums'] },
-  menu: { paddingLeft: 4 },
   menuText: { fontSize: 18 },
 });

@@ -7,26 +7,38 @@
 
 import { Colors } from '@/constants/theme';
 
-/**
- * 涨跌色（补充规格 §5.1）：深色主题 红 #FF5252 / 绿 #26A69A；浅色主题相应加深（对比度 ≥ 4.5:1）。
- * 通过 setQuoteDark 随主题切换（use-color-scheme 调用）。
- */
 let _isDark = true; // 默认深色（盯盘场景）
 /** 供 use-color-scheme 在主题切换时调用 */
 export function setQuoteDark(isDark: boolean): void {
   _isDark = isDark;
 }
 
-/** 涨跌色（主题感知） */
+/**
+ * 涨跌色（主题感知）。
+ *
+ * UI 评审修正（2026-10-21）：
+ *  - 浅色「跌」色 #0F9B6C 作文字压白底仅 3.54:1，作为涨跌胶囊底色压白字同样 3.54:1，
+ *    而「涨」是 4.86:1 —— 等于跌的股票比涨的更难读。改为 #0A7A54（白字 5.35 / 文字 5.35）；「涨」由 #D63030 微调到 #C82B2B，
+ *    让它在卡片底上也过 4.5（4.27 → 4.81）。
+ *  - 深色主题底色是亮色（#FF5252 / #26A69A），压白字只有 2.6 / 3.0:1，
+ *    必须改用深字，见 pillText。
+ *  - 平盘灰原来两套主题共用一个值，浅色下仅 3.0:1，拆开。
+ */
 export const QuoteColors = {
   get up(): string {
-    return _isDark ? '#FF5252' : '#D63030';
+    return _isDark ? '#FF5252' : '#C82B2B';
   },
   get down(): string {
-    return _isDark ? '#26A69A' : '#0F9B6C';
+    return _isDark ? '#26A69A' : '#0A7A54';
   },
   /** 平盘 */
-  flat: '#8A8F98',
+  get flat(): string {
+    return _isDark ? '#8A8F98' : '#5F6570';
+  },
+  /** 压在涨跌实色胶囊上的文字色（浅色底深用白字，深色底亮用深字） */
+  get pillText(): string {
+    return _isDark ? '#0B0F13' : '#FFFFFF';
+  },
 } as const;
 
 /** 根据涨跌值取色（A 股口径：涨红跌绿，随主题） */

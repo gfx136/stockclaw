@@ -16,7 +16,9 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { StockTile } from '@/components/stock-tile';
 import { ExclusionPicker } from '@/components/filter-controls';
+import { Icon } from '@/components/icon';
 import { ThemedText } from '@/components/themed-text';
+import { TouchTarget } from '@/components/touch-target';
 import { useTheme } from '@/hooks/use-theme';
 import { useOnline } from '@/hooks/use-online';
 import { fetchAllStocks } from '@/lib/api/failover';
@@ -246,9 +248,11 @@ export default function AllStocksScreen() {
     <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]} edges={['top']}>
       {/* ① 顶栏：标题 + 搜索框 */}
       <View style={[styles.topBar, { borderBottomColor: theme.border }]}>
-        <ThemedText type="subtitle" style={styles.title}>{t('tab_stocks')}</ThemedText>
+        <ThemedText type="navTitle">{t('tab_stocks')}</ThemedText>
         <View style={[styles.searchBox, { backgroundColor: theme.backgroundElement }]}>
-          <Text style={[styles.searchIcon, { color: theme.textSecondary }]}>🔍</Text>
+          <View style={styles.searchIconWrap}>
+            <Icon name="magnifyingglass" size={13} color={theme.textSecondary} weight="regular" fallbackGlyph="🔍" />
+          </View>
           <TextInput
             style={[styles.searchInput, { color: theme.text }]}
             placeholder={t('home_searchPlaceholder')}
@@ -260,29 +264,37 @@ export default function AllStocksScreen() {
             returnKeyType="search"
           />
           {query ? (
-            <Pressable onPress={() => setQuery('')} hitSlop={8} accessibilityLabel={t('home_clearSearch')}>
-              <Text style={[styles.clearIcon, { color: theme.textSecondary }]}>✕</Text>
-            </Pressable>
+            <TouchTarget onPress={() => setQuery('')} accessibilityLabel={t('home_clearSearch')} style={styles.clearBtn}>
+              <Icon name="xmark.circle.fill" size={16} color={theme.textSecondary} weight="regular" fallbackGlyph="✕" />
+            </TouchTarget>
           ) : null}
         </View>
       </View>
 
       {/* ② 工具行：筛选条件 / 排序 / 刷新行情 */}
       <View style={[styles.toolBar, { borderBottomColor: theme.border }]}>
-        <Pressable onPress={() => router.push('/filter')} hitSlop={6}>
+        <TouchTarget onPress={() => router.push('/filter')} accessibilityLabel={t('home_filterBtn')}>
           <View style={[styles.filterBtn, { backgroundColor: theme.backgroundElement }]}>
-            <Text style={[styles.filterBtnText, { color: theme.text }]}>⧩ {t('home_filterBtn')}{activeCondCount > 0 ? ` · ${activeCondCount}` : ''}</Text>
+            <Icon name="line.3.horizontal.decrease" size={13} color={theme.text} weight="semibold" fallbackGlyph="≡" />
+            <Text style={[styles.filterBtnText, { color: theme.text }]} numberOfLines={1}>
+              {t('home_filterBtn')}{activeCondCount > 0 ? ` · ${activeCondCount}` : ''}
+            </Text>
           </View>
-        </Pressable>
-        <Pressable onPress={() => setSortMenuOpen(true)} hitSlop={6} style={styles.sortBtn}>
-          <Text style={[styles.sortText, { color: theme.text }]}>{t('home_sort')} · {sortLabel} ▾</Text>
-        </Pressable>
+        </TouchTarget>
+        <TouchTarget onPress={() => setSortMenuOpen(true)} accessibilityLabel={t('home_sort')}>
+          <View style={styles.sortInner}>
+            <Text style={[styles.sortText, { color: theme.text }]} numberOfLines={1}>
+              {t('home_sort')} · {sortLabel}
+            </Text>
+            <Icon name="chevron.down" size={10} color={theme.textSecondary} weight="semibold" fallbackGlyph="▾" />
+          </View>
+        </TouchTarget>
         <View style={styles.flex1} />
-        <Pressable onPress={onRefresh} disabled={refreshing} hitSlop={8} accessibilityLabel={t('home_refresh')}>
-          <Animated.Text style={[styles.refreshIcon, { color: theme.text, transform: [{ rotate: spinDeg }] }]}>
-            ⟳
-          </Animated.Text>
-        </Pressable>
+        <TouchTarget onPress={onRefresh} disabled={refreshing} accessibilityLabel={t('home_refresh')}>
+          <Animated.View style={{ transform: [{ rotate: spinDeg }] }}>
+            <Icon name="arrow.clockwise" size={18} color={theme.text} weight="semibold" fallbackGlyph="⟳" />
+          </Animated.View>
+        </TouchTarget>
       </View>
 
       {/* 离线横幅 */}
@@ -327,7 +339,7 @@ export default function AllStocksScreen() {
         <View>{Array.from({ length: 12 }).map((_, i) => <SkeletonRow key={i} theme={theme} />)}</View>
       ) : error && stocks.length === 0 ? (
         <View style={styles.center}>
-          <Text style={[styles.errIcon, { color: theme.textSecondary }]}>⚠</Text>
+          <Icon name="exclamationmark.triangle" size={34} color={theme.textSecondary} weight="regular" fallbackGlyph="⚠" />
           <ThemedText type="small" themeColor="textSecondary" style={styles.errText}>{error}</ThemedText>
           <Pressable onPress={() => load()}>
             <View style={[styles.retryBtn, { backgroundColor: theme.backgroundElement }]}>
@@ -420,16 +432,22 @@ const styles = StyleSheet.create({
   },
   title: { fontSize: 22 },
   searchBox: { flex: 1, height: 36, borderRadius: 18, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12 },
-  searchIcon: { fontSize: 12, marginRight: 6 },
+  searchIconWrap: { marginRight: 6, justifyContent: 'center' },
   searchInput: { flex: 1, fontSize: 15, padding: 0 },
+  // 清空按钮：视觉只有 16pt 图标，命中区由 TouchTarget 撑到 44pt
+  clearBtn: { minWidth: 44 },
   clearIcon: { fontSize: 14, paddingLeft: 6 },
   toolBar: {
     height: 44, flexDirection: 'row', alignItems: 'center',
-    paddingHorizontal: 16, gap: 16, borderBottomWidth: StyleSheet.hairlineWidth,
+    // 左右收到 10：按钮自带 44pt 命中区，视觉边距由按钮内部留白补齐
+    paddingHorizontal: 10, gap: 8, borderBottomWidth: StyleSheet.hairlineWidth,
   },
-  filterBtn: { height: 32, borderRadius: 16, paddingHorizontal: 14, justifyContent: 'center' },
+  filterBtn: {
+    height: 32, borderRadius: 16, paddingHorizontal: 12,
+    flexDirection: 'row', alignItems: 'center', gap: 5,
+  },
   filterBtnText: { fontSize: 14 },
-  sortBtn: { paddingVertical: 4 },
+  sortInner: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   sortText: { fontSize: 14 },
   refreshIcon: { fontSize: 20 },
   banner: { marginHorizontal: 16, marginTop: 6, borderRadius: 8, paddingVertical: 6, alignItems: 'center' },

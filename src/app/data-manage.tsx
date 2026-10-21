@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
+import { TouchTarget } from '@/components/touch-target';
 import { PeriodColors, semanticColor } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -101,7 +102,7 @@ export default function DataManageScreen() {
       <Stack.Screen options={{ title: t('dm_title'), headerBackTitle: t('common_back') }} />
       <ScrollView contentContainerStyle={[styles.content, { paddingBottom: 40 + insets.bottom }]}>
         {/* 总览卡 */}
-        <View style={[styles.card, { backgroundColor: theme.backgroundElement }]}>
+        <View style={[styles.card, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
           <Text style={[styles.cardTitle, { color: theme.text }]}>{t('dm_overview')}</Text>
           <Row label={t('dm_database')} value={t('dm_databasePath')} theme={theme} />
           <Row label={t('dm_totalSize')} value={stats ? fmtBytes(stats.bytes) : '—'} theme={theme} />
@@ -111,7 +112,7 @@ export default function DataManageScreen() {
         </View>
 
         {/* 分周期表 */}
-        <View style={[styles.card, { backgroundColor: theme.backgroundElement }]}>
+        <View style={[styles.card, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
           <Text style={[styles.cardTitle, { color: theme.text }]}>{t('dm_byPeriod')}</Text>
           {periods.map((p) => (
             <View key={p.period} style={[styles.periodRow, { borderBottomColor: theme.border }]}>
@@ -124,9 +125,11 @@ export default function DataManageScreen() {
                   {lang === 'en' ? `${p.codes} stocks · ${p.bars.toLocaleString()} bars` : `${p.codes} 只 · ${p.bars.toLocaleString()} 根`} · {fmtTime(p.lastUpdate)}
                 </Text>
               </View>
-              <Pressable onPress={() => onDeletePeriod(p)} hitSlop={6} disabled={p.codes === 0}>
-                <Text style={[styles.deleteText, { color: p.codes === 0 ? theme.textSecondary : semanticColor('danger', isDark) }]}>删除</Text>
-              </Pressable>
+              <TouchTarget onPress={() => onDeletePeriod(p)} disabled={p.codes === 0}>
+                <Text style={[styles.deleteText, { color: p.codes === 0 ? theme.textSecondary : semanticColor('danger', isDark) }]}>
+                  {t('dm_delete')}
+                </Text>
+              </TouchTarget>
             </View>
           ))}
         </View>
@@ -158,12 +161,12 @@ function Row({ label, value, theme }: { label: string; value: string; theme: Ret
 const styles = StyleSheet.create({
   container: { flex: 1 },
   content: { padding: 16, gap: 14 },
-  card: { borderRadius: 12, padding: 14, gap: 4 },
+  card: { borderRadius: 12, padding: 14, gap: 4, borderWidth: StyleSheet.hairlineWidth },
   cardTitle: { fontSize: 14, fontWeight: '700', marginBottom: 4 },
   row: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 6 },
   rowLabel: { fontSize: 13 },
   rowValue: { fontSize: 13, fontVariant: ['tabular-nums'] },
-  periodRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth },
+  periodRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 2, borderBottomWidth: StyleSheet.hairlineWidth },
   periodInfo: { flex: 1, gap: 2 },
   periodNameRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   periodSwatch: { width: 10, height: 10, borderRadius: 2 },

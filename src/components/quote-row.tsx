@@ -3,7 +3,7 @@ import { Pressable, StyleSheet, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
 import { Spacing } from '@/constants/theme';
-import { fmtMoney, fmtPercent, fmtPrice, upDownColor } from '@/lib/format';
+import { fmtMoney, fmtPercent, fmtPrice, QuoteColors, upDownColor } from '@/lib/format';
 import type { Stock } from '@/types/stock';
 
 interface Props {
@@ -46,7 +46,7 @@ export const QuoteRow = memo(function QuoteRow({ stock, onPress, onLongPress }: 
           {fmtPrice(stock.price)}
         </ThemedText>
         <View style={[styles.pctBox, { backgroundColor: color }]}>
-          <ThemedText type="small" style={styles.pctText}>
+          <ThemedText type="small" style={[styles.pctText, { color: QuoteColors.pillText }]}>
             {fmtPercent(stock.changePercent)}
           </ThemedText>
         </View>
@@ -76,7 +76,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   pctText: {
-    color: '#ffffff',
     fontSize: 13,
     lineHeight: 18,
     fontVariant: ['tabular-nums'],
