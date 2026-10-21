@@ -10,6 +10,7 @@ import { loadFavorites, toggleFavorite } from '@/lib/favorites';
 import { setDetailList } from '@/lib/detail-nav';
 import { useT } from '@/lib/i18n';
 import { getFilterState, setFilterOutput, subscribeFilter } from '@/lib/filter-store';
+import { getFilterRunState, runStageText, subscribeFilterRun } from '@/lib/filter-runner';
 import type { Stock } from '@/types/stock';
 
 /**
@@ -19,13 +20,15 @@ import type { Stock } from '@/types/stock';
  */
 export default function ResultsScreen() {
   const theme = useTheme();
-  const { t } = useT();
+  const { t, tf } = useT();
   const router = useRouter();
   const [query, setQuery] = useState('');
   const [favSet, setFavSet] = useState<Set<string>>(new Set());
 
   const state = useSyncExternalStore(subscribeFilter, getFilterState, getFilterState);
   const output = state.output;
+  // 后台运行的进度（在筛选面板里点了「后台运行」后会在这里继续显示）
+  const runState = useSyncExternalStore(subscribeFilterRun, getFilterRunState, getFilterRunState);
 
   useEffect(() => {
     (async () => {
@@ -76,6 +79,26 @@ export default function ResultsScreen() {
           </>
         ) : null}
       </View>
+
+      {/* 后台筛选进度条：面板关掉后在这里继续显示，避免"点了运行就没反应" */}
+      {runState.running ? (
+        <View style={styles.runBanner}>
+          <View style={styles.runBannerHead}>
+            <ThemedText type="small" themeColor="textSecondary" style={styles.runBannerText} numberOfLines={1}>
+              {runStageText(runState, t, tf)}
+            </ThemedText>
+            <ThemedText type="small" themeColor="textSecondary">{runState.percent}%</ThemedText>
+          </View>
+          <View style={[styles.progressTrack, { backgroundColor: theme.backgroundElement }]}>
+            <View
+              style={[
+                styles.progressFill,
+                { width: `${Math.max(2, runState.percent)}%`, backgroundColor: theme.tint },
+              ]}
+            />
+          </View>
+        </View>
+      ) : null}
 
       {!output ? (
         <View style={styles.center}>
@@ -146,6 +169,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16, paddingTop: 4, paddingBottom: 6,
   },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12 },
+  runBanner: { paddingHorizontal: 16, paddingBottom: 10 },
+  runBannerHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 },
+  runBannerText: { flex: 1, marginRight: 8 },
+  progressTrack: { height: 6, borderRadius: 3, overflow: 'hidden' },
+  progressFill: { height: 6, borderRadius: 3 },
   emptyIcon: { fontSize: 40 },
   emptyText: { textAlign: 'center', lineHeight: 22 },
   searchWrap: { paddingHorizontal: 16, paddingBottom: 8 },

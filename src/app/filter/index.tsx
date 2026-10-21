@@ -1,7 +1,6 @@
 import { useRouter } from 'expo-router';
-import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import {
-  ActivityIndicator,
   Alert,
   Pressable,
   ScrollView,
@@ -18,13 +17,16 @@ import { RulePicker } from '@/components/rule-picker';
 import { ThemedText } from '@/components/themed-text';
 import { useTheme } from '@/hooks/use-theme';
 import { useT } from '@/lib/i18n';
-import { fetchAllStocks } from '@/lib/api/failover';
-import { loadFavorites } from '@/lib/favorites';
-import { filterStocks, hasAnyRules, type KlineProvider } from '@/lib/filter-engine';
+import { hasAnyRules } from '@/lib/filter-engine';
+import {
+  getFilterRunState,
+  runStageText,
+  startFilterRun,
+  subscribeFilterRun,
+} from '@/lib/filter-runner';
 import { loadFilterSets, saveFilterSet, type SavedFilterSet } from '@/lib/filter-sets';
-import { getFilterState, setFilter, setFilterOutput, setFilterRunning, subscribeFilter } from '@/lib/filter-store';
-import { multiPeriodProvider, preloadKlineMap } from '@/lib/kline-db';
-import type { FilterSet, KlinePeriod, MarketCapTier } from '@/types/stock';
+import { getFilterState, setFilter, subscribeFilter } from '@/lib/filter-store';
+import type { FilterSet, MarketCapTier } from '@/types/stock';
 
 /**
  * 选股条件面板（产品规格 2.2，底部弹出 Sheet）。
@@ -38,10 +40,15 @@ export default function FilterScreen() {
 
   const storeState = useSyncExternalStore(subscribeFilter, getFilterState, getFilterState);
   const filter = storeState.filter;
-  const running = storeState.running;
+  // 运行状态由模块级执行器提供：面板关掉也继续跑（后台运行）
+  const runState = useSyncExternalStore(subscribeFilterRun, getFilterRunState, getFilterRunState);
+  const running = runState.running;
 
   const [msg, setMsg] = useState<string | null>(null);
   const [savedSets, setSavedSets] = useState<SavedFilterSet[]>([]);
+  /** 用户是否点了「后台运行」——是的话跑完不自动跳结果页 */
+  const [bgRun, setBgRun] = useState(false);
+  const mountedAt = useRef(Date.now());
 
   useEffect(() => {
     (async () => setSavedSets(await loadFilterSets()))();
@@ -56,57 +63,28 @@ export default function FilterScreen() {
     return Number.isFinite(v) ? v : undefined;
   };
 
-  /** 收集本次筛选需要的 K 线周期 */
-  const neededPeriods = (): Set<KlinePeriod> => {
-    const s = new Set<KlinePeriod>();
-    if (filter.gapMin !== undefined) s.add('daily');
-    for (const r of filter.rules ?? []) {
-      for (const p of r.periods ?? ['daily']) s.add(p);
-    }
-    return s;
-  };
+  const run = useCallback(() => {
+    setMsg(null);
+    setBgRun(false);
+    startFilterRun();
+  }, []);
 
-  const run = useCallback(async () => {
-    setFilterRunning(true);
-    setMsg(t('filter_running'));
-    try {
-      const stocks = await fetchAllStocks(200);
-      if (stocks.length === 0) {
-        setMsg(t('filter_noData'));
-        return;
-      }
-      // 仅自选时需要自选集合
-      const favCodes = filter.onlyFavorites
-        ? new Set((await loadFavorites()).map((f) => f.code))
-        : undefined;
-
-      let provider: KlineProvider | undefined;
-      const periods = neededPeriods();
-      if (periods.size > 0) {
-        const maps: Partial<Record<KlinePeriod, Awaited<ReturnType<typeof preloadKlineMap>>>> = {};
-        for (const p of periods) {
-          maps[p] = await preloadKlineMap(p, p === 'daily' ? 500 : 260);
-        }
-        provider = multiPeriodProvider(maps);
-        const missing = [...periods].filter((p) => (maps[p]?.size ?? 0) === 0);
-        if (missing.length > 0) {
-          const label = missing.map((p) => t(({ '60min': 'filter_period60m', daily: 'filter_periodDaily', weekly: 'filter_periodWeekly', monthly: 'filter_periodMonthly' } as Record<string, string>)[p] as never)).join('/');
-          setMsg(tf('filter_missingZh', { label }));
-        }
-      }
-
-      const out = filterStocks(stocks, filter, provider, 300, favCodes, (scanned, total) => {
-        setMsg(tf('filter_runningProgress', { scanned, total }));
-      });
-      setFilterOutput(out);
+  // 前台跑完 → 自动跳到结果页；后台运行则不打扰
+  useEffect(() => {
+    if (bgRun) return;
+    if (runState.stage !== 'done') return;
+    if ((runState.finishedAt ?? 0) <= mountedAt.current) return; // 进页面时看到的旧结果不算
+    const id = setTimeout(() => {
       router.back();
       router.navigate('/(tabs)/results');
-    } catch (e) {
-      setMsg(e instanceof Error ? e.message : t('filter_failed'));
-    } finally {
-      setFilterRunning(false);
-    }
-  }, [filter, router]);
+    }, 450);
+    return () => clearTimeout(id);
+  }, [runState.stage, runState.finishedAt, bgRun, router]);
+
+  const goBackground = useCallback(() => {
+    setBgRun(true);
+    router.back();
+  }, [router]);
 
   const clearAll = () => {
     setFilter({});
@@ -143,14 +121,41 @@ export default function FilterScreen() {
           <ThemedText type="small" themeColor="textSecondary">{t('filter_clear')}</ThemedText>
         </Pressable>
         <View style={styles.topSpacer} />
-        <Pressable onPress={run} disabled={running} hitSlop={8}>
-          {running ? (
-            <ActivityIndicator size="small" />
-          ) : (
+        {running ? (
+          <Pressable onPress={goBackground} hitSlop={8}>
+            <ThemedText type="small" style={{ color: theme.tint }}>{t('filter_bgRun')}</ThemedText>
+          </Pressable>
+        ) : (
+          <Pressable onPress={run} hitSlop={8}>
             <ThemedText type="smallBold" style={{ color: theme.tint }}>{t('filter_run')}</ThemedText>
-          )}
-        </Pressable>
+          </Pressable>
+        )}
       </View>
+
+      {/* 运行进度条（用户反馈3）：阶段文案 + 百分比 + 进度条
+          点右上角「后台运行」可关掉本面板，筛选在后台继续，结果页顶部会显示同一条进度 */}
+      {running || runState.stage === 'error' ? (
+        <View style={styles.progressWrap}>
+          <View style={styles.progressHead}>
+            <ThemedText type="small" themeColor="textSecondary" style={styles.progressText} numberOfLines={1}>
+              {runState.stage === 'error' && runState.message === 'EMPTY'
+                ? t('filter_noData')
+                : runStageText(runState, t, tf)}
+            </ThemedText>
+            {running ? (
+              <ThemedText type="small" themeColor="textSecondary">{runState.percent}%</ThemedText>
+            ) : null}
+          </View>
+          <View style={[styles.progressTrack, { backgroundColor: theme.backgroundElement }]}>
+            <View
+              style={[
+                styles.progressFill,
+                { width: `${Math.max(2, runState.percent)}%`, backgroundColor: theme.tint },
+              ]}
+            />
+          </View>
+        </View>
+      ) : null}
 
       <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
         {/* 常用条件 */}
@@ -302,6 +307,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16, paddingVertical: 8,
   },
   topSpacer: { flex: 1 },
+  progressWrap: { paddingHorizontal: 16, paddingBottom: 10 },
+  progressHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 },
+  progressText: { flex: 1, marginRight: 8 },
+  progressTrack: { height: 6, borderRadius: 3, overflow: 'hidden' },
+  progressFill: { height: 6, borderRadius: 3 },
   scroll: { flex: 1 },
   scrollContent: { paddingBottom: 48, paddingTop: 4 },
   block: { paddingHorizontal: 16, marginBottom: 22 },

@@ -413,6 +413,18 @@ export function InteractiveKline({
    */
   const showInfoBar = (crossActive || selected !== null) && !!selBar;
 
+  /**
+   * 选中 K 线的日期标签（画在底部日期带里，跟随光标）。
+   * 宽度按字符数估算，水平位置做边界收敛，避免超出绘图区被裁。
+   */
+  const selDateTag = (() => {
+    if (!selBar) return null;
+    const w = Math.max(46, selBar.date.length * 5.2 + 12);
+    const cx = xOf(Math.max(0, Math.min(n - 1, (selected ?? 0) - startIdx)));
+    const x = Math.max(0, Math.min(width - PAD_RIGHT - w, cx - w / 2));
+    return { x, w };
+  })();
+
   const linePath = (arr: (number | undefined)[], yFn: (v: number) => number): string => {
     let d = '';
     let started = false;
@@ -600,6 +612,30 @@ export function InteractiveKline({
                 </SvgText>
               ))}
             </G>
+
+            {/* 选中 K 线的日期标签：单击/长按时在光标正下方的日期带里高亮该根 K 线的日期
+                （日期轴只有稀疏刻度，看不出选中的到底是哪一天） */}
+            {selDateTag ? (
+              <G>
+                <Rect
+                  x={selDateTag.x}
+                  y={plotBottom + 1}
+                  width={selDateTag.w}
+                  height={DATE_H - 2}
+                  rx={3}
+                  fill={labelBg}
+                />
+                <SvgText
+                  x={selDateTag.x + selDateTag.w / 2}
+                  y={plotBottom + 10}
+                  fill={labelFg}
+                  fontSize={9}
+                  textAnchor="middle"
+                  fontWeight="700">
+                  {selBar!.date}
+                </SvgText>
+              </G>
+            ) : null}
 
             {/* 十字光标：竖线（吸附 bar 中心） */}
             {selected !== null && selected >= startIdx && selected < endIdx ? (

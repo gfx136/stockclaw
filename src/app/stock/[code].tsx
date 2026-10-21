@@ -32,10 +32,8 @@ import { downloadAllPeriods, refreshStockKlines } from '@/lib/kline-downloader';
 import { getLastUpdate, loadKlines } from '@/lib/kline-db';
 import {
   getDefaultBars,
-  getDetailLandscape,
   getIndicatorToggles,
   getSubIndicator,
-  setDetailLandscape,
   setIndicatorToggle,
   setSubIndicator,
   type IndToggleKey,
@@ -88,7 +86,13 @@ export default function StockDetailScreen() {
   const [sheetOpen, setSheetOpen] = useState(false);
   const [resetToken, setResetToken] = useState(0);
   const [selIdx, setSelIdx] = useState<number | null>(null);
-  const [landscape, setLandscape] = useState(false);
+  /**
+   * 横屏判定（用户反馈4修复）：直接**跟随设备实际方向**。
+   * 之前用 state + 手动按钮，会在进页面时 lockAsync(PORTRAIT_UP)，
+   * 导致手机转横屏不再自动旋转（"旋转屏幕功能不见了"）。
+   * 现在默认解锁方向（见下方 effect），横屏与否由窗口尺寸决定。
+   */
+  const landscape = winW > winH;
   const [defaultBars, setDefaultBarsState] = useState(60);
   const [dataAt, setDataAt] = useState<number | null>(null);
   const [weeklyBars, setWeeklyBars] = useState<KlineBar[]>([]);
@@ -101,21 +105,22 @@ export default function StockDetailScreen() {
   useEffect(() => {
     (async () => {
       setToggles(await getIndicatorToggles());
-      setLandscape(await getDetailLandscape());
       setDefaultBarsState(await getDefaultBars());
       const sub = await getSubIndicator();
       if (sub) setSubInd(sub as SubMode);
     })();
   }, []);
 
-  // 横竖屏切换（§4.6）
+  /**
+   * 屏幕方向（用户反馈4修复）。
+   * 进详情页时**解锁**方向 → 手机转横屏自动生效（恢复原来的转屏习惯）；
+   * 离开详情页再锁回竖屏，其它页面不受影响。
+   */
   useEffect(() => {
-    ScreenOrientation.lockAsync(
-      landscape ? ScreenOrientation.OrientationLock.LANDSCAPE : ScreenOrientation.OrientationLock.PORTRAIT_UP
-    ).catch(() => {});
-  }, [landscape]);
-  useEffect(() => () => {
-    ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => {});
+    ScreenOrientation.unlockAsync().catch(() => {});
+    return () => {
+      ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => {});
+    };
   }, []);
 
   // 行情 + 收藏
@@ -241,11 +246,14 @@ export default function StockDetailScreen() {
     } catch { /* 取消 */ }
   }, [stockName, code, quote]);
 
+  /** 手动切横/竖屏（设备本身旋转也能生效，这个按钮只是不想转手机时的快捷方式） */
   const toggleLandscape = useCallback(() => {
-    const next = !landscape;
-    setLandscape(next);
-    setDetailLandscape(next);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    ScreenOrientation.lockAsync(
+      landscape
+        ? ScreenOrientation.OrientationLock.PORTRAIT_UP
+        : ScreenOrientation.OrientationLock.LANDSCAPE
+    ).catch(() => {});
   }, [landscape]);
 
   const onToggleIndicator = useCallback((k: IndToggleKey) => {
@@ -507,8 +515,12 @@ export default function StockDetailScreen() {
           <Pressable onPress={() => { setResetToken((t) => t + 1); Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); }} hitSlop={8}>
             <Text style={[styles.optBtn, { color: theme.text }]}>{t('detail_reset')}</Text>
           </Pressable>
-          <Pressable onPress={toggleLandscape} hitSlop={8}>
-            <Text style={[styles.optBtn, { color: theme.text }]}>⤢</Text>
+          <Pressable onPress={toggleLandscape} hitSlop={8} accessibilityLabel={t('detail_rotate')}>
+            {/* 原来只有一个 ⤢ 字形，系统字体缺字时会变成看不见的空白，
+                用户就以为"旋转功能不见了"。改成文字标签，任何字体都能显示。 */}
+            <Text style={[styles.optBtn, { color: theme.text }]}>
+              {landscape ? t('detail_portrait') : t('detail_landscape')}
+            </Text>
           </Pressable>
           <Pressable onPress={onDownload} disabled={downloading} hitSlop={8}>
             {downloading ? <ActivityIndicator size="small" /> : <Text style={[styles.optBtn, { color: theme.tint }]}>{t('detail_download')}</Text>}
@@ -665,9 +677,9 @@ const styles = StyleSheet.create({
   ohlcRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   ohlcLabel: { fontSize: 11, width: 26 },
   ohlcVal: { fontSize: 11, fontVariant: ['tabular-nums'], width: 46 },
-  optionBar: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, gap: 14 },
+  optionBar: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, gap: 10 },
   periodSeg: { flexDirection: 'row', gap: 4 },
-  periodBtn: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8 },
+  periodBtn: { paddingHorizontal: 7, paddingVertical: 5, borderRadius: 8 },
   periodText: { fontSize: 13, fontWeight: '600' },
   optSpacer: { flex: 1 },
   optBtn: { fontSize: 13, fontWeight: '600' },

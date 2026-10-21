@@ -558,14 +558,14 @@ export const MIN_BARS_FOR_SIGNAL = 60;
  * @param favorites     自选代码集合（onlyFavorites 时用）
  * @param onProgress    进度回调（已扫描 / 总数）
  */
-export function filterStocks(
+export async function filterStocks(
   stocks: Stock[],
   filter: FilterSet,
   klineProvider?: KlineProvider,
   limit = 300,
   favorites?: Set<string>,
   onProgress?: (scanned: number, total: number) => void
-): FilterOutput {
+): Promise<FilterOutput> {
   const needSignals = hasAnySignal(filter.signals);
   const needRules = hasAnyRules(filter);
   const needGap = filter.gapMin !== undefined;
@@ -590,7 +590,12 @@ export function filterStocks(
   for (let i = 0; i < stocks.length; i++) {
     const stock = stocks[i];
     // 进度回调（每 200 只报一次，避免频繁 setState）
-    if (onProgress && i % 200 === 0) onProgress(i, stocks.length);
+    // ⚠️ 必须让出事件循环，否则同步大循环会把 JS 线程占满，
+    //    进度条的 setState 永远刷不出来（表现为卡住不动直到跑完）。
+    if (onProgress && i % 200 === 0) {
+      onProgress(i, stocks.length);
+      await new Promise<void>((r) => setTimeout(r, 0));
+    }
     // 仅自选
     if (filter.onlyFavorites && favorites && !favorites.has(stock.code)) continue;
     if (!matchBase(stock, filter, rankMap)) continue;

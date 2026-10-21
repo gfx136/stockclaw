@@ -56,9 +56,17 @@ async function fetchJson(url: string, timeoutMs = 15000): Promise<any> {
  *    这里显式补成 ISO（空格换 T、日期补 T00:00:00），解析失败则返回 0 由调用方剔除。
  */
 function parseTs(date: string): number {
-  const s = date.trim();
-  const iso = s.includes(' ') ? s.replace(' ', 'T') : s.length <= 10 ? `${s}T00:00:00` : s;
-  const ms = Date.parse(iso);
+  const m = /^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2}))?/.exec(date.trim());
+  if (!m) return 0;
+  // ⚠️ 必须用 Date.UTC 而非 Date.parse：
+  //    Date.parse("2026-10-20T00:00:00") 按**本地时区**解释，Date.parse("2026-10-20")
+  //    按 UTC 解释。两种写法混用时同一交易日会得到相差 8 小时的两个 ts，
+  //    而主键是 (symbol, period, ts) → 同一天存成两行 → 图上同一天出现两根 K 线。
+  //    固定成 UTC 口径，与设备时区无关，也与历史数据的 UTC 口径一致。
+  const ms = Date.UTC(
+    Number(m[1]), Number(m[2]) - 1, Number(m[3]),
+    Number(m[4] ?? 0), Number(m[5] ?? 0)
+  );
   return Number.isFinite(ms) ? Math.floor(ms / 1000) : 0;
 }
 

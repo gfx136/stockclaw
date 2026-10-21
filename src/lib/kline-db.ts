@@ -115,15 +115,35 @@ export async function saveKlines(
   bars: KlineBar[]
 ): Promise<void> {
   if (bars.length === 0) return;
+  // 同一交易日只保留一根：接口偶发重复行、或历史数据与新数据 ts 口径不一致时，
+  // 都会让「同一天」出现两条记录。写入前先在内存里去一次重。
+  const byDate = new Map<string, KlineBar>();
+  for (const b of bars) {
+    if (!b.date) continue;
+    byDate.set(b.date, b);
+  }
+  const clean = [...byDate.values()].sort((a, b) => a.ts - b.ts);
+  if (clean.length === 0) return;
+
   return serializeWrite(async () => {
     const db = await getDb();
     await inTx(db, async (conn) => {
+      // 🔴 按「日期区间」先删旧行，而不是只靠 INSERT OR REPLACE。
+      //    主键是 (symbol, period, ts)，历史上 ts 口径变过一次
+      //    （旧版 new Date("2026-10-20") = UTC 零点；改版后曾用本地零点），
+      //    同一交易日的两行 ts 不同 → 主键去不掉 → 图上同一天出现两根 K 线。
+      //    按日期删可以连带清掉这些历史脏行，之后每个交易日只会剩一行。
+      await conn.runAsync(
+        `DELETE FROM kline WHERE symbol=? AND period=? AND date>=? AND date<=?`,
+        [symbol, period, clean[0].date, clean[clean.length - 1].date]
+      );
+
       const stmt = await conn.prepareAsync(
         `INSERT OR REPLACE INTO kline (symbol, period, ts, date, o, h, l, c, v)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
       );
       try {
-        for (const b of bars) {
+        for (const b of clean) {
           await stmt.executeAsync([
             symbol, period, b.ts, b.date, b.open, b.high, b.low, b.close, b.volume,
           ]);
@@ -131,7 +151,7 @@ export async function saveKlines(
       } finally {
         await stmt.finalizeAsync();
       }
-      const latest = bars[bars.length - 1];
+      const latest = clean[clean.length - 1];
       await conn.runAsync(
         `INSERT OR REPLACE INTO meta (symbol, period, updatedAt, bars)
          VALUES (?, ?, ?, (SELECT COUNT(*) FROM kline WHERE symbol=? AND period=?))`,
@@ -148,18 +168,28 @@ export async function loadKlines(
   limit = 200
 ): Promise<KlineBar[]> {
   const db = await getDb();
+  // 多取一倍：历史库里同一交易日可能还留着 ts 口径不同的两行，
+  // 去重后根数会变少，多取一些保证最终仍能拿满 limit 根。
   const rows = await db.getAllAsync<{
     ts: number; date: string; o: number; h: number; l: number; c: number; v: number;
   }>(
     `SELECT ts, date, o, h, l, c, v FROM kline
      WHERE symbol=? AND period=? ORDER BY ts DESC LIMIT ?`,
-    [symbol, period, limit]
+    [symbol, period, Math.max(limit * 2, limit)]
   );
-  return rows
-    .map((r) => ({
+  // 按 date 去重（行已按 ts 倒序，第一次出现的即最新那行），再截到 limit 根
+  const seen = new Set<string>();
+  const out: KlineBar[] = [];
+  for (const r of rows) {
+    const key = r.date || `ts:${r.ts}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({
       ts: r.ts, date: r.date, open: r.o, high: r.h, low: r.l, close: r.c, volume: r.v,
-    }))
-    .reverse();
+    });
+    if (out.length >= limit) break;
+  }
+  return out.reverse();
 }
 
 /** 读某股票某周期的最后更新时间（用于增量下载判断） */
